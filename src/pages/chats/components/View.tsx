@@ -6,6 +6,7 @@ import {
   Markdown,
   Textarea,
   GetLicense,
+  CopyButton,
 } from "@/components";
 import { getConversationById } from "@/lib";
 import { ChatConversation } from "@/types";
@@ -19,6 +20,13 @@ import {
   SendIcon,
   Check,
   Loader2,
+  Pencil,
+  Save,
+  XCircle,
+  CheckCircle2,
+  ChevronDown,
+  ChevronRight,
+  AlertTriangle,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import moment from "moment";
@@ -34,11 +42,91 @@ import {
   AudioRecorder,
 } from ".";
 
+type ReviewState = "pending" | "accepted" | "rejected";
+
+type ParsedSection = {
+  title: string;
+  content: string;
+};
+
+const REVIEW_SECTIONS = [
+  "actions",
+  "decisions",
+  "follow-ups",
+  "follow ups",
+  "followups",
+  "risks",
+  "open questions",
+  "open question",
+  "evidence",
+];
+
+const parseReviewSections = (content: string): ParsedSection[] => {
+  const lines = content.split("\n");
+  const sections: ParsedSection[] = [];
+  let currentTitle = "";
+  let currentLines: string[] = [];
+
+  const pushCurrent = () => {
+    if (!currentTitle || !currentLines.length) return;
+    const normalized = currentTitle.trim().toLowerCase();
+    const isRelevant = REVIEW_SECTIONS.some((name) =>
+      normalized.includes(name)
+    );
+    if (!isRelevant) return;
+
+    sections.push({
+      title: currentTitle.replace(/[:#*]/g, "").trim(),
+      content: currentLines.join("\n").trim(),
+    });
+  };
+
+  for (const line of lines) {
+    const heading = line.match(/^#{1,4}\s+(.+)$/);
+    const boldLabel = line.match(/^\*\*(.+?)\*\*\s*:?[\s-]*$/);
+    if (heading || boldLabel) {
+      pushCurrent();
+      currentTitle = (heading?.[1] || boldLabel?.[1] || "").trim();
+      currentLines = [];
+      continue;
+    }
+
+    if (currentTitle) {
+      currentLines.push(line);
+    }
+  }
+
+  pushCurrent();
+  return sections.filter((section) => section.content);
+};
+
+const getUncertaintyLabel = (text: string) => {
+  const normalized = text.toLowerCase();
+  if (
+    normalized.includes("high confidence") ||
+    normalized.includes("confirmed")
+  ) {
+    return { label: "High confidence", className: "text-green-600 border-green-500/40" };
+  }
+
+  if (
+    normalized.includes("low confidence") ||
+    normalized.includes("uncertain") ||
+    normalized.includes("unverified")
+  ) {
+    return { label: "Needs verification", className: "text-amber-600 border-amber-500/40" };
+  }
+
+  return null;
+};
+
 const View = () => {
   const { conversationId } = useParams();
   const { hasActiveLicense, supportsImages } = useApp();
   const navigate = useNavigate();
   const [messages, setMessages] = useState<ChatConversation | null>(null);
+  const [reviewStates, setReviewStates] = useState<Record<string, ReviewState>>({});
+  const [expandedEvidence, setExpandedEvidence] = useState<Record<string, boolean>>({});
 
   const {
     handleDeleteConfirm,
@@ -149,13 +237,16 @@ const View = () => {
           description="Start a new message to get started"
         />
       ) : (
-        <div className="flex flex-col gap-4 pb-24 px-2">
+        <div className="flex flex-col gap-5 pb-24 px-2">
           {messages?.messages.map((message, index, array) => {
             const isUser = message.role === "user";
             const showDate =
               index === 0 ||
               moment(message.timestamp).format("YYYY-MM-DD") !==
                 moment(array[index - 1]?.timestamp).format("YYYY-MM-DD");
+            const reviewState = reviewStates[message.id || ""] || "pending";
+            const sections = isUser ? [] : parseReviewSections(message.content);
+            const uncertainty = getUncertaintyLabel(message.content);
 
             return (
               <div key={message.id}>
@@ -186,18 +277,143 @@ const View = () => {
 
                   {/* Message content */}
                   <div
-                    className={`flex flex-col gap-1 max-w-[70%] ${
+                    className={`flex flex-col gap-2 max-w-[78%] ${
                       isUser ? "items-end" : "items-start"
                     }`}
                   >
                     <Card
-                      className={`p-3 text-xs lg:text-sm transition-all shadow-none ${
+                      className={`p-3 text-xs lg:text-sm transition-all shadow-none space-y-3 ${
                         isUser
                           ? "!bg-primary text-primary-foreground !border-primary rounded-tr-sm"
                           : "!bg-muted/50 dark:!bg-muted/30 rounded-tl-sm"
                       }`}
                     >
+                      {!isUser && (
+                        <div className="flex items-center justify-between gap-3 border-b border-border/50 pb-2">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <Badge variant="outline" className="text-[10px] bg-background/60">
+                              AI Note
+                            </Badge>
+                            {uncertainty && (
+                              <Badge variant="outline" className={`text-[10px] ${uncertainty.className}`}>
+                                <AlertTriangle className="size-3 mr-1" />
+                                {uncertainty.label}
+                              </Badge>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-1.5 text-muted-foreground">
+                            <CopyButton content={message.content} />
+                            <span className="text-[10px]">{moment(message.timestamp).format("hh:mm A")}</span>
+                          </div>
+                        </div>
+                      )}
+
                       <Markdown>{message.content}</Markdown>
+
+                      {!isUser && sections.length > 0 && (
+                        <div className="space-y-2 border-t border-border/40 pt-3">
+                          <div className="flex items-center justify-between">
+                            <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-medium">
+                              Review sections
+                            </p>
+                            <Badge variant="outline" className="text-[10px]">
+                              {sections.length} grouped
+                            </Badge>
+                          </div>
+                          <div className="grid gap-2 md:grid-cols-2">
+                            {sections.map((section) => {
+                              const evidenceKey = `${message.id}-${section.title}`;
+                              const isEvidence = section.title.toLowerCase().includes("evidence");
+                              const showEvidence = expandedEvidence[evidenceKey] ?? false;
+                              return (
+                                <div key={section.title} className="rounded-md border border-border/60 bg-background/50 p-2.5 space-y-2">
+                                  <div className="flex items-center justify-between gap-2">
+                                    <p className="text-[11px] font-semibold">{section.title}</p>
+                                    <CopyButton content={section.content} />
+                                  </div>
+                                  {isEvidence ? (
+                                    <>
+                                      <Button
+                                        size="sm"
+                                        variant="ghost"
+                                        className="h-6 px-1.5 text-[10px]"
+                                        onClick={() =>
+                                          setExpandedEvidence((prev) => ({
+                                            ...prev,
+                                            [evidenceKey]: !showEvidence,
+                                          }))
+                                        }
+                                      >
+                                        {showEvidence ? (
+                                          <ChevronDown className="size-3 mr-1" />
+                                        ) : (
+                                          <ChevronRight className="size-3 mr-1" />
+                                        )}
+                                        {showEvidence ? "Hide evidence" : "Expand evidence"}
+                                      </Button>
+                                      {showEvidence && (
+                                        <div className="text-[11px] text-muted-foreground leading-relaxed">
+                                          <Markdown>{section.content}</Markdown>
+                                        </div>
+                                      )}
+                                    </>
+                                  ) : (
+                                    <div className="text-[11px] text-muted-foreground leading-relaxed max-h-28 overflow-auto pr-1">
+                                      <Markdown>{section.content}</Markdown>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+
+                      {!isUser && (
+                        <div className="border-t border-border/40 pt-2">
+                          <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">
+                            Review actions
+                          </p>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Button size="sm" variant="outline" className="h-7 text-[11px]">
+                              <Pencil className="size-3 mr-1" />
+                              Edit
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant={reviewState === "accepted" ? "default" : "outline"}
+                              className="h-7 text-[11px]"
+                              onClick={() =>
+                                setReviewStates((prev) => ({
+                                  ...prev,
+                                  [message.id || ""]: "accepted",
+                                }))
+                              }
+                            >
+                              <CheckCircle2 className="size-3 mr-1" />
+                              Accept
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant={reviewState === "rejected" ? "destructive" : "outline"}
+                              className="h-7 text-[11px]"
+                              onClick={() =>
+                                setReviewStates((prev) => ({
+                                  ...prev,
+                                  [message.id || ""]: "rejected",
+                                }))
+                              }
+                            >
+                              <XCircle className="size-3 mr-1" />
+                              Reject
+                            </Button>
+                            <Button size="sm" variant="outline" className="h-7 text-[11px] ml-auto">
+                              <Save className="size-3 mr-1" />
+                              Save
+                            </Button>
+                          </div>
+                        </div>
+                      )}
                     </Card>
                     <Badge
                       variant="outline"
@@ -205,7 +421,9 @@ const View = () => {
                         isUser ? "-mr-1" : "-ml-1"
                       }`}
                     >
-                      {moment(message.timestamp).format("hh:mm A")}
+                      {isUser
+                        ? moment(message.timestamp).format("hh:mm A")
+                        : `Status: ${reviewState}`}
                     </Badge>
                   </div>
 

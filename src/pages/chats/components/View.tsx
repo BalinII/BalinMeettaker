@@ -6,6 +6,7 @@ import {
   Markdown,
   Textarea,
   GetLicense,
+  Selection,
 } from "@/components";
 import { getConversationById } from "@/lib";
 import { ChatConversation } from "@/types";
@@ -19,6 +20,7 @@ import {
   SendIcon,
   Check,
   Loader2,
+  HistoryIcon,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import moment from "moment";
@@ -49,7 +51,15 @@ const View = () => {
     handleDownload,
     isDownloaded,
     isAttached,
+    conversations,
+    isLoading,
   } = useHistory();
+
+  const sortedRecentConversations = [...conversations]
+    .sort((a, b) => b.updatedAt - a.updatedAt)
+    .slice(0, 10);
+
+  const hasReviewedItems = (messages?.messages.length || 0) > 2;
 
   const completion = useChatCompletion(
     conversationId as string,
@@ -89,6 +99,24 @@ const View = () => {
       description={`${messages?.messages.length} messages in this conversation`}
       rightSlot={
         <div className="flex flex-row items-center gap-2">
+          <div className="w-[220px]">
+            <Selection
+              selected={conversationId || ""}
+              options={sortedRecentConversations.map((conversation) => ({
+                label: `${conversation.title} • ${moment(
+                  conversation.updatedAt
+                ).fromNow()}`,
+                value: conversation.id,
+              }))}
+              placeholder={isLoading ? "Loading captures..." : "Recent captures"}
+              isLoading={isLoading}
+              onChange={(value) => {
+                if (value !== conversationId) {
+                  navigate(`/chats/view/${value}`);
+                }
+              }}
+            />
+          </div>
           <Button
             variant="outline"
             title="Open this conversation in overlay"
@@ -150,6 +178,30 @@ const View = () => {
         />
       ) : (
         <div className="flex flex-col gap-4 pb-24 px-2">
+          <Card className="p-3 bg-muted/20 border-border/60 shadow-none">
+            <div className="flex items-start justify-between gap-3">
+              <div className="space-y-1">
+                <p className="text-xs text-muted-foreground flex items-center gap-1.5">
+                  <HistoryIcon className="size-3" />
+                  Current capture
+                </p>
+                <p className="text-xs font-mono break-all">{messages?.id}</p>
+                <p className="text-xs text-muted-foreground">
+                  Created {moment(messages?.createdAt).format("MMM D, YYYY hh:mm A")}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Last activity {moment(messages?.updatedAt).format("MMM D, YYYY hh:mm A")}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Provider / model: Not captured
+                </p>
+              </div>
+              <Badge variant={hasReviewedItems ? "default" : "outline"}>
+                {hasReviewedItems ? "Reviewed items available" : "No reviewed items"}
+              </Badge>
+            </div>
+          </Card>
+
           {messages?.messages.map((message, index, array) => {
             const isUser = message.role === "user";
             const showDate =

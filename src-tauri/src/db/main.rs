@@ -17,5 +17,12 @@ pub fn migrations() -> Vec<Migration> {
             sql: include_str!("migrations/chat-history.sql"),
             kind: MigrationKind::Up,
         },
+        // Migration 3: Add user-facing display names for captures/conversations
+        Migration {
+            version: 3,
+            description: "add_capture_display_name_fields",
+            sql: include_str!("migrations/capture-display-name.sql"),
+            kind: MigrationKind::Up,
+        },
     ]
 }

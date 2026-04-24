@@ -11,6 +11,8 @@ const LEGACY_CHAT_HISTORY_KEY = "chat_history";
 interface DbConversation {
   id: string;
   title: string;
+  display_name?: string | null;
+  display_name_source?: "generated" | "manual" | "imported" | null;
   created_at: number;
   updated_at: number;
 }
@@ -59,6 +61,45 @@ function validateConversation(conversation: ChatConversation): boolean {
   return true;
 }
 
+function generateDefaultDisplayName(timestamp: number): string {
+  const date = new Date(timestamp || Date.now());
+  return `Meeting Notes ${date.toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  })}`;
+}
+
+function isIdLikeTitle(title: string, id: string): boolean {
+  return title === id || /^(conv|sysaudio_conv)_\d+_[a-z0-9]{9}$/.test(title);
+}
+
+function normalizeConversationNaming(
+  conversation: ChatConversation
+): ChatConversation {
+  const preferredTimestamp =
+    conversation.createdAt || conversation.updatedAt || Date.now();
+
+  const shouldGenerateDisplayName =
+    !conversation.displayName ||
+    (conversation.title &&
+      isIdLikeTitle(conversation.title, conversation.id) &&
+      conversation.displayNameSource !== "manual" &&
+      conversation.displayNameSource !== "imported");
+
+  return {
+    ...conversation,
+    displayName: shouldGenerateDisplayName
+      ? generateDefaultDisplayName(preferredTimestamp)
+      : conversation.displayName || conversation.title,
+    displayNameSource: shouldGenerateDisplayName
+      ? "generated"
+      : conversation.displayNameSource || "manual",
+  };
+}
+
 /**
  * Validate message data
  */
@@ -91,7 +132,8 @@ function validateMessage(message: any): boolean {
 export async function createConversation(
   conversation: ChatConversation
 ): Promise<ChatConversation> {
-  if (!validateConversation(conversation)) {
+  const normalizedConversation = normalizeConversationNaming(conversation);
+  if (!validateConversation(normalizedConversation)) {
     throw new Error("Invalid conversation data");
   }
 
@@ -100,17 +142,19 @@ export async function createConversation(
   try {
     // Insert conversation
     await db.execute(
-      "INSERT INTO conversations (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)",
+      "INSERT INTO conversations (id, title, display_name, display_name_source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
       [
-        conversation.id,
-        conversation.title,
-        conversation.createdAt || Date.now(),
-        conversation.updatedAt || Date.now(),
+        normalizedConversation.id,
+        normalizedConversation.title,
+        normalizedConversation.displayName,
+        normalizedConversation.displayNameSource,
+        normalizedConversation.createdAt || Date.now(),
+        normalizedConversation.updatedAt || Date.now(),
       ]
     );
 
     // Insert all messages
-    for (const message of conversation.messages) {
+    for (const message of normalizedConversation.messages) {
       if (!validateMessage(message)) {
         console.warn("Skipping invalid message in conversation creation");
         continue;
@@ -124,7 +168,7 @@ export async function createConversation(
         "INSERT INTO messages (id, conversation_id, role, content, timestamp, attached_files) VALUES (?, ?, ?, ?, ?, ?)",
         [
           message.id,
-          conversation.id,
+          normalizedConversation.id,
           message.role,
           message.content,
           message.timestamp,
@@ -133,12 +177,14 @@ export async function createConversation(
       );
     }
 
-    return conversation;
+    return normalizedConversation;
   } catch (error) {
     console.error("Failed to create conversation:", error);
     // Rollback: delete conversation if message insertion failed
     await db
-      .execute("DELETE FROM conversations WHERE id = ?", [conversation.id])
+      .execute("DELETE FROM conversations WHERE id = ?", [
+        normalizedConversation.id,
+      ])
       .catch(() => {});
     throw error;
   }
@@ -178,20 +224,35 @@ export async function getAllConversations(): Promise<ChatConversation[]> {
     }
 
     // Build result
-    return conversations.map((conv) => ({
-      id: conv.id,
-      title: conv.title,
-      createdAt: conv.created_at,
-      updatedAt: conv.updated_at,
-      messages:
-        messagesByConversation.get(conv.id)?.map((msg) => ({
-          id: msg.id,
-          role: msg.role,
-          content: msg.content,
-          timestamp: msg.timestamp,
-          attachedFiles: safeJsonParse(msg.attached_files, undefined),
-        })) || [],
-    }));
+    return conversations.map((conv) => {
+      const defaultName = generateDefaultDisplayName(
+        conv.created_at || conv.updated_at
+      );
+      const displayName =
+        conv.display_name ||
+        (conv.title && !isIdLikeTitle(conv.title, conv.id)
+          ? conv.title
+          : defaultName);
+
+      return {
+        id: conv.id,
+        title: displayName,
+        displayName,
+        displayNameSource:
+          conv.display_name_source ||
+          (conv.display_name ? "manual" : "generated"),
+        createdAt: conv.created_at,
+        updatedAt: conv.updated_at,
+        messages:
+          messagesByConversation.get(conv.id)?.map((msg) => ({
+            id: msg.id,
+            role: msg.role,
+            content: msg.content,
+            timestamp: msg.timestamp,
+            attachedFiles: safeJsonParse(msg.attached_files, undefined),
+          })) || [],
+      };
+    });
   } catch (error) {
     console.error("Failed to get all conversations:", error);
     throw error;
@@ -230,9 +291,21 @@ export async function getConversationById(
       [id]
     );
 
+    const defaultName = generateDefaultDisplayName(
+      conv.created_at || conv.updated_at
+    );
+    const displayName =
+      conv.display_name ||
+      (conv.title && !isIdLikeTitle(conv.title, conv.id)
+        ? conv.title
+        : defaultName);
+
     return {
       id: conv.id,
-      title: conv.title,
+      title: displayName,
+      displayName,
+      displayNameSource:
+        conv.display_name_source || (conv.display_name ? "manual" : "generated"),
       createdAt: conv.created_at,
       updatedAt: conv.updated_at,
       messages: messages.map((msg) => ({
@@ -255,7 +328,8 @@ export async function getConversationById(
 export async function updateConversation(
   conversation: ChatConversation
 ): Promise<ChatConversation> {
-  if (!validateConversation(conversation)) {
+  const normalizedConversation = normalizeConversationNaming(conversation);
+  if (!validateConversation(normalizedConversation)) {
     throw new Error("Invalid conversation data");
   }
 
@@ -264,8 +338,14 @@ export async function updateConversation(
   try {
     // Update conversation
     const updateResult = await db.execute(
-      "UPDATE conversations SET title = ?, updated_at = ? WHERE id = ?",
-      [conversation.title, conversation.updatedAt, conversation.id]
+      "UPDATE conversations SET title = ?, display_name = ?, display_name_source = ?, updated_at = ? WHERE id = ?",
+      [
+        normalizedConversation.title,
+        normalizedConversation.displayName,
+        normalizedConversation.displayNameSource,
+        normalizedConversation.updatedAt,
+        normalizedConversation.id,
+      ]
     );
 
     if (updateResult.rowsAffected === 0) {
@@ -275,17 +355,17 @@ export async function updateConversation(
     // Get existing messages for backup
     const existingMessages = await db.select<DbMessage[]>(
       "SELECT * FROM messages WHERE conversation_id = ?",
-      [conversation.id]
+      [normalizedConversation.id]
     );
 
     // Delete existing messages
     await db.execute("DELETE FROM messages WHERE conversation_id = ?", [
-      conversation.id,
+      normalizedConversation.id,
     ]);
 
     // Insert updated messages
     try {
-      for (const message of conversation.messages) {
+      for (const message of normalizedConversation.messages) {
         if (!validateMessage(message)) {
           console.warn("Skipping invalid message in conversation update");
           continue;
@@ -299,7 +379,7 @@ export async function updateConversation(
           "INSERT INTO messages (id, conversation_id, role, content, timestamp, attached_files) VALUES (?, ?, ?, ?, ?, ?)",
           [
             message.id,
-            conversation.id,
+            normalizedConversation.id,
             message.role,
             message.content,
             message.timestamp,
@@ -331,7 +411,7 @@ export async function updateConversation(
       throw messageError;
     }
 
-    return conversation;
+    return normalizedConversation;
   } catch (error) {
     console.error("Failed to update conversation:", error);
     throw error;
@@ -464,39 +544,42 @@ export async function migrateLocalStorageToSQLite(): Promise<{
 
     for (const conversation of conversations) {
       try {
+        const normalizedConversation = normalizeConversationNaming(conversation);
         // Validate conversation data
-        if (!conversation?.id || !conversation?.title) {
+        if (!normalizedConversation?.id || !normalizedConversation?.title) {
           console.warn("Skipping invalid conversation:", conversation);
           errorCount++;
           continue;
         }
 
         // Check if conversation already exists in database
-        const existing = await getConversationById(conversation.id);
+        const existing = await getConversationById(normalizedConversation.id);
         if (existing) {
           console.log(
-            `Conversation ${conversation.id} already exists, skipping`
+            `Conversation ${normalizedConversation.id} already exists, skipping`
           );
           continue;
         }
 
         // Insert conversation
         await db.execute(
-          "INSERT INTO conversations (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)",
+          "INSERT INTO conversations (id, title, display_name, display_name_source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
           [
-            conversation.id,
-            conversation.title,
-            conversation.createdAt || Date.now(),
-            conversation.updatedAt || Date.now(),
+            normalizedConversation.id,
+            normalizedConversation.title,
+            normalizedConversation.displayName,
+            normalizedConversation.displayNameSource,
+            normalizedConversation.createdAt || Date.now(),
+            normalizedConversation.updatedAt || Date.now(),
           ]
         );
 
         // Insert messages
         if (
-          Array.isArray(conversation.messages) &&
-          conversation.messages.length > 0
+          Array.isArray(normalizedConversation.messages) &&
+          normalizedConversation.messages.length > 0
         ) {
-          for (const message of conversation.messages) {
+          for (const message of normalizedConversation.messages) {
             // Validate message
             if (
               !message?.id ||
@@ -504,7 +587,7 @@ export async function migrateLocalStorageToSQLite(): Promise<{
               typeof message?.content !== "string"
             ) {
               console.warn(
-                `Skipping invalid message in conversation ${conversation.id}:`,
+                `Skipping invalid message in conversation ${normalizedConversation.id}:`,
                 message
               );
               continue;
@@ -518,7 +601,7 @@ export async function migrateLocalStorageToSQLite(): Promise<{
               "INSERT INTO messages (id, conversation_id, role, content, timestamp, attached_files) VALUES (?, ?, ?, ?, ?, ?)",
               [
                 message.id,
-                conversation.id,
+                normalizedConversation.id,
                 message.role,
                 message.content,
                 message.timestamp || Date.now(),
@@ -537,7 +620,9 @@ export async function migrateLocalStorageToSQLite(): Promise<{
         errorCount++;
         // Clean up partially migrated conversation
         await db
-          .execute("DELETE FROM conversations WHERE id = ?", [conversation?.id])
+          .execute("DELETE FROM conversations WHERE id = ?", [
+            conversation?.id,
+          ])
           .catch(() => {});
       }
     }

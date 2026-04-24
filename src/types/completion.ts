@@ -18,6 +18,8 @@ export interface ChatMessage {
 export interface ChatConversation {
   id: string;
   title: string;
+  displayName?: string;
+  displayNameSource?: "generated" | "manual" | "imported";
   messages: ChatMessage[];
   createdAt: number;
   updatedAt: number;

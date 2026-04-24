@@ -98,7 +98,9 @@ export function useHistory(): UseHistoryReturn {
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      link.download = generateFilename(conversation.title);
+      link.download = generateFilename(
+        conversation.displayName || conversation.title
+      );
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -183,7 +185,12 @@ export function useHistory(): UseHistoryReturn {
   const generateConversationMarkdown = (
     conversation: ChatConversation
   ): string => {
-    let markdown = `# ${conversation.title}\n\n`;
+    const displayName = conversation.displayName || conversation.title;
+    let markdown = `# ${displayName}\n\n`;
+    markdown += `**Capture ID:** ${conversation.id}\n`;
+    markdown += `**Display Name Source:** ${
+      conversation.displayNameSource || "generated"
+    }\n`;
     markdown += `**Created:** ${new Date(
       conversation.createdAt
     ).toLocaleString()}\n`;

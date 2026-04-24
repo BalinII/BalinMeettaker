@@ -5,9 +5,10 @@ import {
   Button,
   Markdown,
   Textarea,
+  Input,
   GetLicense,
 } from "@/components";
-import { getConversationById } from "@/lib";
+import { getConversationById, saveConversation } from "@/lib";
 import { ChatConversation } from "@/types";
 import {
   Download,
@@ -39,6 +40,7 @@ const View = () => {
   const { hasActiveLicense, supportsImages } = useApp();
   const navigate = useNavigate();
   const [messages, setMessages] = useState<ChatConversation | null>(null);
+  const [displayNameDraft, setDisplayNameDraft] = useState("");
 
   const {
     handleDeleteConfirm,
@@ -61,6 +63,9 @@ const View = () => {
     const getMessages = async () => {
       const conversation = await getConversationById(conversationId as string);
       setMessages(conversation || null);
+      setDisplayNameDraft(
+        conversation?.displayName || conversation?.title || ""
+      );
     };
     getMessages();
   }, [conversationId]);
@@ -81,11 +86,28 @@ const View = () => {
     navigate(-1);
   };
 
+  const saveDisplayName = async () => {
+    if (!messages) return;
+    const trimmed = displayNameDraft.trim();
+    if (!trimmed || trimmed === (messages.displayName || messages.title)) return;
+
+    const updatedConversation: ChatConversation = {
+      ...messages,
+      title: trimmed,
+      displayName: trimmed,
+      displayNameSource: "manual",
+      updatedAt: Date.now(),
+    };
+
+    await saveConversation(updatedConversation);
+    setMessages(updatedConversation);
+  };
+
   return (
     <PageLayout
       isMainTitle={false}
       allowBackButton={true}
-      title={messages?.title || ""}
+      title={messages?.displayName || messages?.title || ""}
       description={`${messages?.messages.length} messages in this conversation`}
       rightSlot={
         <div className="flex flex-row items-center gap-2">
@@ -150,6 +172,24 @@ const View = () => {
         />
       ) : (
         <div className="flex flex-col gap-4 pb-24 px-2">
+          <Card className="p-3 gap-2 shadow-none">
+            <p className="text-xs text-muted-foreground">Display Name</p>
+            <Input
+              value={displayNameDraft}
+              onChange={(e) => setDisplayNameDraft(e.target.value)}
+              onBlur={saveDisplayName}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  void saveDisplayName();
+                }
+              }}
+              placeholder="Meeting notes name"
+            />
+            <p className="text-[10px] text-muted-foreground">
+              Capture ID: {messages?.id}
+            </p>
+          </Card>
           {messages?.messages.map((message, index, array) => {
             const isUser = message.role === "user";
             const showDate =

@@ -6,8 +6,13 @@ import {
   Markdown,
   Textarea,
   GetLicense,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
 } from "@/components";
-import { getConversationById } from "@/lib";
+import { getConversationById, getReviewedCaptureEntry, markCaptureReviewed } from "@/lib";
 import { ChatConversation } from "@/types";
 import {
   Download,
@@ -20,7 +25,7 @@ import {
   Check,
   Loader2,
 } from "lucide-react";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import moment from "moment";
 import { useParams, useNavigate } from "react-router-dom";
 import { PageLayout } from "@/layouts";
@@ -39,7 +44,9 @@ const View = () => {
   const { hasActiveLicense, supportsImages } = useApp();
   const navigate = useNavigate();
   const [messages, setMessages] = useState<ChatConversation | null>(null);
+  const [reviewedEntry, setReviewedEntry] = useState<ReturnType<typeof getReviewedCaptureEntry>>(null);
 
+  const history = useHistory();
   const {
     handleDeleteConfirm,
     confirmDelete,
@@ -49,7 +56,7 @@ const View = () => {
     handleDownload,
     isDownloaded,
     isAttached,
-  } = useHistory();
+  } = history;
 
   const completion = useChatCompletion(
     conversationId as string,
@@ -57,13 +64,34 @@ const View = () => {
     setMessages
   );
 
+  const recentCaptures = useMemo(
+    () =>
+      [...history.conversations]
+        .sort((a, b) => b.updatedAt - a.updatedAt)
+        .slice(0, 12),
+    [history.conversations]
+  );
+
+
   useEffect(() => {
     const getMessages = async () => {
       const conversation = await getConversationById(conversationId as string);
       setMessages(conversation || null);
+      if (conversation?.id) {
+        setReviewedEntry(getReviewedCaptureEntry(conversation.id));
+      } else {
+        setReviewedEntry(null);
+      }
     };
     getMessages();
   }, [conversationId]);
+
+  useEffect(() => {
+    if (!messages?.id) return;
+
+    const entry = markCaptureReviewed(messages.id, messages.messages.length);
+    setReviewedEntry(entry);
+  }, [messages?.id, messages?.messages.length]);
 
   useEffect(() => {
     // Scroll to bottom when messages load
@@ -141,6 +169,40 @@ const View = () => {
         </div>
       }
     >
+      <div className="mb-4 p-3 rounded-lg border border-border/60 bg-muted/20">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+          <div className="space-y-2">
+            <p className="text-xs uppercase text-muted-foreground tracking-wide">Recent captures</p>
+            <Select
+              value={conversationId}
+              onValueChange={(value) => navigate(`/chats/view/${value}`)}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="Pick a recent capture" />
+              </SelectTrigger>
+              <SelectContent>
+                {recentCaptures.map((capture) => (
+                  <SelectItem key={capture.id} value={capture.id}>
+                    {capture.title || "Untitled capture"} · {moment(capture.updatedAt).format("MMM D, hh:mm A")}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-1 text-xs">
+            <p><span className="font-medium">Capture ID:</span> {messages?.id || "-"}</p>
+            <p><span className="font-medium">Generated:</span> {messages?.createdAt ? moment(messages.createdAt).format("YYYY-MM-DD hh:mm A") : "-"}</p>
+            <p><span className="font-medium">Provider / Model:</span> Not recorded for local capture history</p>
+            <p><span className="font-medium">State:</span> {reviewedEntry ? "Reviewed" : "Generated (not reviewed)"}</p>
+            <p><span className="font-medium">Reviewed items:</span> {reviewedEntry?.reviewedMessageCount ?? 0}</p>
+            {reviewedEntry?.reviewedAt && (
+              <p><span className="font-medium">Last reviewed:</span> {moment(reviewedEntry.reviewedAt).format("YYYY-MM-DD hh:mm A")}</p>
+            )}
+          </div>
+        </div>
+      </div>
+
       {messages?.messages.length === 0 ? (
         <Empty
           isLoading={false}

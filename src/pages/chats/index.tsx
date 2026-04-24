@@ -1,13 +1,17 @@
 import { Badge, Input, Card, Empty } from "@/components";
 import { useHistory } from "@/hooks";
 import { PageLayout } from "@/layouts";
+import { getReviewedCaptureMap } from "@/lib";
 import { MessageCircleIcon, Search } from "lucide-react";
 import moment from "moment";
 import { useNavigate } from "react-router-dom";
+import { useMemo } from "react";
 
 const Dashboard = () => {
   const conversations = useHistory();
   const navigate = useNavigate();
+
+  const reviewedCaptures = useMemo(() => getReviewedCaptureMap(), [conversations.conversations.length]);
   // Group conversations by date
   const groupedConversations = conversations.conversations.reduce(
     (acc, doc) => {
@@ -67,7 +71,10 @@ const Dashboard = () => {
                     {moment(dateKey).format("ddd, MMM D")}
                   </p>
                   <div className="grid grid-cols-1 gap-3">
-                    {groupedConversations[dateKey].map((doc) => (
+                    {groupedConversations[dateKey].map((doc) => {
+                      const reviewed = reviewedCaptures[doc.id];
+
+                      return (
                       <Card
                         key={doc.id}
                         className="shadow-none select-none p-4 gap-0 group relative transition-all !bg-black/5 dark:!bg-white/5 hover:!border-primary/50 cursor-pointer"
@@ -86,8 +93,27 @@ const Dashboard = () => {
                             </Badge>
                           </div>
                         </div>
+                        <div className="mt-2 flex items-center gap-1">
+                            <Badge variant="outline" className="text-[10px]">
+                              Capture ID: {doc.id.slice(0, 8)}
+                            </Badge>
+                            <Badge
+                              variant="outline"
+                              className={`text-[10px] ${
+                                reviewed
+                                  ? "border-emerald-500/60 text-emerald-600"
+                                  : "border-amber-500/60 text-amber-600"
+                              }`}
+                            >
+                              {reviewed ? "Reviewed" : "Generated"}
+                            </Badge>
+                            <Badge variant="outline" className="text-[10px]">
+                              Reviewed items: {reviewed?.reviewedMessageCount ?? 0}
+                            </Badge>
+                          </div>
                       </Card>
-                    ))}
+                    );
+                    })}
                   </div>
                 </div>
               ))}

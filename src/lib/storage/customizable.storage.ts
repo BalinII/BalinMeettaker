@@ -21,7 +21,7 @@ export const DEFAULT_CUSTOMIZABLE_STATE: CustomizableState = {
   appIcon: { isVisible: true },
   alwaysOnTop: { isEnabled: false },
   autostart: { isEnabled: true },
-  cursor: { type: "invisible" },
+  cursor: { type: "default" },
 };
 
 /**
@@ -37,11 +37,10 @@ export const getCustomizableState = (): CustomizableState => {
     const parsedState = JSON.parse(stored);
 
     return {
-      appIcon: parsedState.appIcon || DEFAULT_CUSTOMIZABLE_STATE.appIcon,
-      alwaysOnTop:
-        parsedState.alwaysOnTop || DEFAULT_CUSTOMIZABLE_STATE.alwaysOnTop,
+      appIcon: DEFAULT_CUSTOMIZABLE_STATE.appIcon,
+      alwaysOnTop: DEFAULT_CUSTOMIZABLE_STATE.alwaysOnTop,
       autostart: parsedState.autostart || DEFAULT_CUSTOMIZABLE_STATE.autostart,
-      cursor: parsedState.cursor || DEFAULT_CUSTOMIZABLE_STATE.cursor,
+      cursor: DEFAULT_CUSTOMIZABLE_STATE.cursor,
     };
   } catch (error) {
     console.error("Failed to get customizable state:", error);

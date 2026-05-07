@@ -13,21 +13,21 @@
     "macOSPrivateApi": true,
     "windows": [
       {
-        "title": "MinuteSmith - Meeting Notes",
-        "width": 600,
-        "height": 54,
-        "decorations": false,
-        "transparent": true,
+        "title": "MinuteSmith",
+        "width": 1280,
+        "height": 820,
+        "decorations": true,
+        "transparent": false,
         "alwaysOnTop": false,
-        "resizable": false,
-        "visibleOnAllWorkspaces": true,
-        "skipTaskbar": true,
+        "resizable": true,
+        "visibleOnAllWorkspaces": false,
+        "skipTaskbar": false,
         "visible": true,
-        "center": false,
-        "contentProtected": true,
-        "focus": false,
+        "center": true,
+        "contentProtected": false,
+        "focus": true,
         "acceptFirstMouse": true,
-        "shadow": false
+        "shadow": true
       }
     ],
     "security": {

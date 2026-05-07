@@ -1,5 +1,5 @@
-import { useApp, useTheme } from "@/contexts";
-import { Header, Label, Slider, Button } from "@/components";
+import { useTheme } from "@/contexts";
+import { Header, Label, Button } from "@/components";
 import { MonitorIcon, MoonIcon, SunIcon } from "lucide-react";
 import {
   DropdownMenu,
@@ -9,27 +9,17 @@ import {
 } from "@/components";
 
 export const Theme = () => {
-  const { theme, transparency, setTheme, onSetTransparency } = useTheme();
-  const { hasActiveLicense } = useApp();
+  const { theme, setTheme } = useTheme();
 
   return (
     <div id="theme" className="relative space-y-3">
       <Header
-        title={`Theme Customization ${
-          hasActiveLicense
-            ? ""
-            : " (You need an active license to use this feature)"
-        }`}
-        description="Personalize your experience with custom theme and transparency settings"
+        title="Theme"
+        description="Choose the appearance for your local-first meeting notes workspace."
         isMainTitle
       />
 
-      {/* Theme Toggle */}
-      <div
-        className={`space-y-2 ${
-          hasActiveLicense ? "" : "opacity-60 pointer-events-none"
-        }`}
-      >
+      <div className="space-y-2">
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-3">
             <div>
@@ -52,9 +42,11 @@ export const Theme = () => {
                 )}
               </Label>
               <p className="text-xs text-muted-foreground mt-1">
-                {theme === "light"
-                  ? "Using light theme for better visibility in bright environments"
-                  : "Using dark theme for comfortable viewing in low light"}
+                {theme === "system"
+                  ? "Following your operating system appearance."
+                  : theme === "light"
+                    ? "Using light theme for bright workspaces."
+                    : "Using dark theme for comfortable note review."}
               </p>
             </div>
           </div>
@@ -83,35 +75,6 @@ export const Theme = () => {
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-        </div>
-      </div>
-
-      {/* Transparency Slider */}
-      <div
-        className={`space-y-2 ${
-          hasActiveLicense ? "" : "opacity-60 pointer-events-none"
-        }`}
-      >
-        <Header
-          title="Window Transparency"
-          description="Adjust the transparency level of the application window"
-        />
-        <div className="space-y-3">
-          <div className="flex items-center gap-4 mt-4">
-            <Slider
-              value={[transparency]}
-              onValueChange={(value: number[]) => onSetTransparency(value[0])}
-              min={0}
-              max={100}
-              step={1}
-              className="flex-1"
-            />
-          </div>
-
-          <p className="text-xs text-muted-foreground/70">
-            💡 Tip: Higher transparency lets you see through the window, perfect
-            for dark overlay. Changes apply immediately.
-          </p>
         </div>
       </div>
     </div>

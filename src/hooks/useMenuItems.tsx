@@ -1,15 +1,10 @@
 import {
-  Settings,
-  Code,
-  MessagesSquare,
-  WandSparkles,
   AudioLinesIcon,
-  SquareSlashIcon,
-  MonitorIcon,
+  BugIcon,
+  CalendarClockIcon,
   HomeIcon,
   PowerIcon,
-  BugIcon,
-  MessageSquareTextIcon,
+  Settings,
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { GithubIcon } from "@/components";
@@ -27,45 +22,19 @@ export const useMenuItems = () => {
       href: "/dashboard",
     },
     {
-      icon: MessagesSquare,
-      label: "Chats",
-      href: "/chats",
-    },
-    {
-      icon: WandSparkles,
-      label: "System prompts",
-      href: "/system-prompts",
+      icon: CalendarClockIcon,
+      label: "Meetings",
+      href: "/meetings",
     },
     {
       icon: Settings,
-      label: "App Settings",
+      label: "Settings",
       href: "/settings",
     },
     {
-      icon: MessageSquareTextIcon,
-      label: "Responses",
-      href: "/responses",
-    },
-    {
-      icon: MonitorIcon,
-      label: "Screenshot",
-      href: "/screenshot",
-    },
-    {
       icon: AudioLinesIcon,
-      label: "Audio",
+      label: "Audio Setup",
       href: "/audio",
-    },
-    {
-      icon: SquareSlashIcon,
-      label: "Cursor & Shortcuts",
-      href: "/shortcuts",
-    },
-
-    {
-      icon: Code,
-      label: "Dev space",
-      href: "/dev-space",
     },
   ];
 
@@ -73,7 +42,7 @@ export const useMenuItems = () => {
     {
       icon: BugIcon,
       label: "Report a bug",
-      href: "https://github.com/iamsrikanthnani/minutesmith/issues/new?template=bug-report.yml",
+      href: "https://github.com/BalinII/BalinMeettaker/issues/new",
     },
     {
       icon: PowerIcon,
@@ -92,7 +61,7 @@ export const useMenuItems = () => {
     {
       title: "GitHub",
       icon: GithubIcon,
-      link: "https://github.com/iamsrikanthnani/minutesmith",
+      link: "https://github.com/BalinII/BalinMeettaker",
     },
   ];
 

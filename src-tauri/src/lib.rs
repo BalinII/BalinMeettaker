@@ -108,14 +108,9 @@ pub fn run() {
         .setup(|app| {
             // Setup main window positioning
             window::setup_main_window(app).expect("Failed to setup main window");
-            #[cfg(target_os = "macos")]
-            init(app.app_handle());
-            let app_handle = app.handle();
-            if app_handle.get_webview_window("dashboard").is_none() {
-                if let Err(e) = window::create_dashboard_window(&app_handle) {
-                    eprintln!("Failed to pre-create dashboard window on startup: {}", e);
-                }
-            }
+            // MinuteSmith now opens the primary window directly on the dashboard.
+            // Do not create a secondary dashboard window or convert the main window
+            // into the old floating assistant panel on startup.
 
             #[cfg(desktop)]
             {
@@ -182,9 +177,8 @@ pub fn run() {
                         .build(),
                 )
                 .expect("Failed to initialize global shortcut plugin");
-            if let Err(e) = shortcuts::setup_global_shortcuts(app.handle()) {
-                eprintln!("Failed to setup global shortcuts: {}", e);
-            }
+            // Global overlay/chat shortcuts are intentionally not registered by default.
+            // Meeting capture controls are available from the dashboard UI.
             Ok(())
         });
 

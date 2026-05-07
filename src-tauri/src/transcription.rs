@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use std::path::Path;
 use std::process::Command;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -49,14 +48,15 @@ pub async fn transcribe_audio_file_local(
         return Err("Audio path is required".to_string());
     }
 
-    if let Ok(command) = std::env::var("MINUTESMITH_LOCAL_TRANSCRIBE_COMMAND") {
-        let command = command.trim().to_string();
-        if !command.is_empty() {
-            return run_local_backend_command(&command, &meeting_id, &audio_path).await;
-        }
+    let command = std::env::var("MINUTESMITH_LOCAL_TRANSCRIBE_COMMAND")
+        .map(|value| value.trim().to_string())
+        .unwrap_or_default();
+
+    if command.is_empty() {
+        return Err("Transcription command not configured. Set MINUTESMITH_LOCAL_TRANSCRIBE_COMMAND to a local faster-whisper compatible command and retry.".to_string());
     }
 
-    Ok(placeholder_response(&audio_path))
+    run_local_backend_command(&command, &meeting_id, &audio_path).await
 }
 
 async fn run_local_backend_command(
@@ -139,45 +139,27 @@ fn validate_segments(segments: &mut [TranscriptSegment]) -> Result<(), String> {
     Ok(())
 }
 
-fn placeholder_response(audio_path: &str) -> TranscriptionResponse {
-    let file_name = Path::new(audio_path)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or(audio_path);
-
-    TranscriptionResponse {
-        provider: "local-placeholder".to_string(),
-        segments: vec![TranscriptSegment {
-            id: None,
-            participant_id: None,
-            speaker_label: Some("Local backend".to_string()),
-            start_ms: 0,
-            end_ms: 1000,
-            text: format!(
-                "Local transcription backend is not configured yet for {file_name}. Set MINUTESMITH_LOCAL_TRANSCRIBE_COMMAND to a faster-whisper compatible local command and retry."
-            ),
-            confidence: None,
-            metadata: Some(serde_json::json!({
-                "placeholder": true,
-                "sourceAudioPath": audio_path
-            })),
-        }],
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn placeholder_is_timestamped_and_local() {
-        let response = placeholder_response("/tmp/meeting.wav");
+    fn validate_segments_trims_text_and_rejects_bad_timing() {
+        let mut segments = vec![TranscriptSegment {
+            id: None,
+            participant_id: None,
+            speaker_label: None,
+            start_ms: 10,
+            end_ms: 20,
+            text: "  Hello from local audio  ".to_string(),
+            confidence: None,
+            metadata: None,
+        }];
 
-        assert_eq!(response.provider, "local-placeholder");
-        assert_eq!(response.segments[0].start_ms, 0);
-        assert!(response.segments[0].end_ms > response.segments[0].start_ms);
-        assert!(response.segments[0]
-            .text
-            .contains("MINUTESMITH_LOCAL_TRANSCRIBE_COMMAND"));
+        validate_segments(&mut segments).expect("valid segments should pass");
+        assert_eq!(segments[0].text, "Hello from local audio");
+
+        segments[0].end_ms = 5;
+        assert!(validate_segments(&mut segments).is_err());
     }
 }

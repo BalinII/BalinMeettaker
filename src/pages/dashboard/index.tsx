@@ -45,7 +45,7 @@ import {
 import { localTranscriptionProvider } from "@/lib/transcription";
 import type { Meeting, TranscriptionRun } from "@/types";
 
-type CaptureState = "idle" | "recording" | "paused" | "stopping";
+type CaptureState = "idle" | "recording" | "stopping";
 
 type AudioDevice = {
   id: string;
@@ -53,16 +53,12 @@ type AudioDevice = {
   is_default: boolean;
 };
 
-const MEETING_VAD_CONFIG = {
-  enabled: false,
-  hop_size: 1024,
-  sensitivity_rms: 0.012,
-  peak_threshold: 0.035,
-  silence_chunks: 45,
-  min_speech_chunks: 7,
-  pre_speech_chunks: 12,
-  noise_gate_threshold: 0.003,
-  max_recording_duration_secs: 14400,
+type CapturedMeetingAudio = {
+  meetingId: string;
+  audioPath: string;
+  sampleRate: number;
+  sampleCount: number;
+  durationMs: number;
 };
 
 const formatDuration = (seconds: number) => {
@@ -107,18 +103,20 @@ const Dashboard = () => {
   const [meetingTitle, setMeetingTitle] = useState("Untitled meeting");
   const [captureState, setCaptureState] = useState<CaptureState>("idle");
   const [activeMeeting, setActiveMeeting] = useState<Meeting | null>(null);
+  const [activeAudioPath, setActiveAudioPath] = useState("");
   const [startedAt, setStartedAt] = useState<number | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [recentMeetings, setRecentMeetings] = useState<Meeting[]>([]);
-  const [transcriptionRuns, setTranscriptionRuns] = useState<TranscriptionRun[]>([]);
-  const [localAudioPath, setLocalAudioPath] = useState("");
+  const [transcriptionRuns, setTranscriptionRuns] = useState<
+    TranscriptionRun[]
+  >([]);
   const [ollamaModel, setOllamaModel] = useState(DEFAULT_OLLAMA_SUMMARY_MODEL);
-  const [summarizingMeetingIds, setSummarizingMeetingIds] = useState<Set<string>>(
-    () => new Set()
-  );
-  const [transcribingMeetingIds, setTranscribingMeetingIds] = useState<Set<string>>(
-    () => new Set()
-  );
+  const [summarizingMeetingIds, setSummarizingMeetingIds] = useState<
+    Set<string>
+  >(() => new Set());
+  const [transcribingMeetingIds, setTranscribingMeetingIds] = useState<
+    Set<string>
+  >(() => new Set());
   const [devices, setDevices] = useState<{
     input: AudioDevice[];
     output: AudioDevice[];
@@ -128,8 +126,7 @@ const Dashboard = () => {
   const [ollamaStatus, setOllamaStatus] = useState("");
 
   const isRecording = captureState === "recording";
-  const isPaused = captureState === "paused";
-  const isActive = captureState === "recording" || captureState === "paused";
+  const isActive = captureState === "recording";
 
   const titleValue = meetingTitle.trim() || "Untitled meeting";
 
@@ -145,7 +142,6 @@ const Dashboard = () => {
   const captureLabel = useMemo(() => {
     if (error) return "Needs attention";
     if (captureState === "recording") return "Capturing meeting audio";
-    if (captureState === "paused") return "Capture paused";
     if (captureState === "stopping") return "Stopping capture";
     return "Ready to capture";
   }, [captureState, error]);
@@ -165,17 +161,15 @@ const Dashboard = () => {
 
   const transcriptionRunByMeetingId = useMemo(
     () =>
-      new Map(
-        transcriptionRuns.map((run) => [run.meetingId, run] as const)
-      ),
-    [transcriptionRuns]
+      new Map(transcriptionRuns.map((run) => [run.meetingId, run] as const)),
+    [transcriptionRuns],
   );
 
   const transcribeMeetingAudio = useCallback(
     async (meeting: Meeting, audioPath: string) => {
       const trimmedAudioPath = audioPath.trim();
       if (!trimmedAudioPath) {
-        setError("Enter a local audio file path before starting transcription.");
+        setError("No saved meeting audio path is available for transcription.");
         return;
       }
 
@@ -200,7 +194,7 @@ const Dashboard = () => {
 
         const segments = await localTranscriptionProvider.transcribeAudioFile(
           meeting.id,
-          trimmedAudioPath
+          trimmedAudioPath,
         );
         await deleteTranscriptSegments(meeting.id);
         await saveTranscriptSegments(meeting.id, segments);
@@ -211,7 +205,11 @@ const Dashboard = () => {
           status: "completed",
           completedAt: Date.now(),
         });
-        await updateMeetingStatus(meeting.id, "completed", meeting.endedAt ?? Date.now());
+        await updateMeetingStatus(
+          meeting.id,
+          "completed",
+          meeting.endedAt ?? Date.now(),
+        );
       } catch (transcriptionError) {
         const message =
           transcriptionError instanceof Error
@@ -224,9 +222,11 @@ const Dashboard = () => {
           status: "failed",
           error: message,
         }).catch(() => undefined);
-        await updateMeetingStatus(meeting.id, "failed", meeting.endedAt ?? Date.now()).catch(
-          () => undefined
-        );
+        await updateMeetingStatus(
+          meeting.id,
+          "failed",
+          meeting.endedAt ?? Date.now(),
+        ).catch(() => undefined);
         setError(message);
       } finally {
         setTranscribingMeetingIds((current) => {
@@ -237,7 +237,7 @@ const Dashboard = () => {
         await refreshMeetings();
       }
     },
-    [refreshMeetings]
+    [refreshMeetings],
   );
 
   const loadAudioDevices = useCallback(async () => {
@@ -255,77 +255,75 @@ const Dashboard = () => {
     }
   }, []);
 
-  const startAudioCapture = useCallback(async () => {
-    const hasAccess = await invoke<boolean>("check_system_audio_access");
+  const startAudioCapture = useCallback(
+    async (meetingId: string) => {
+      const hasAccess = await invoke<boolean>("check_system_audio_access");
 
-    if (!hasAccess) {
-      throw new Error(
-        "System audio permission is required before MinuteSmith can capture a meeting."
-      );
-    }
+      if (!hasAccess) {
+        throw new Error(
+          "System audio permission is required before MinuteSmith can capture a meeting.",
+        );
+      }
 
-    await invoke("stop_system_audio_capture").catch(() => undefined);
-    await invoke("start_system_audio_capture", {
-      vadConfig: MEETING_VAD_CONFIG,
-      deviceId:
-        selectedAudioDevices.output.id &&
-        selectedAudioDevices.output.id !== "default"
-          ? selectedAudioDevices.output.id
-          : null,
-    });
-  }, [selectedAudioDevices.output.id]);
+      return invoke<CapturedMeetingAudio>("start_meeting_audio_capture", {
+        meetingId,
+        deviceId:
+          selectedAudioDevices.output.id &&
+          selectedAudioDevices.output.id !== "default"
+            ? selectedAudioDevices.output.id
+            : null,
+      });
+    },
+    [selectedAudioDevices.output.id],
+  );
 
   const handleStartMeeting = async () => {
+    let createdMeeting: Meeting | null = null;
+
     try {
       setError("");
       const now = Date.now();
-      await startAudioCapture();
       const meeting = await createMeeting({
         title: titleValue,
         status: "recording",
         startedAt: now,
       });
+      createdMeeting = meeting;
+      const capture = await startAudioCapture(meeting.id);
+      await upsertTranscriptionRun({
+        meetingId: meeting.id,
+        audioPath: capture.audioPath,
+        provider: localTranscriptionProvider.id,
+        status: "queued",
+      });
 
       setActiveMeeting(meeting);
+      setActiveAudioPath(capture.audioPath);
       setStartedAt(now);
       setElapsedSeconds(0);
       setCaptureState("recording");
       await refreshMeetings();
     } catch (startError) {
-      await invoke("stop_system_audio_capture").catch(() => undefined);
       const message =
         startError instanceof Error ? startError.message : String(startError);
       setError(message);
+      if (createdMeeting) {
+        await updateMeetingStatus(
+          createdMeeting.id,
+          "failed",
+          Date.now(),
+        ).catch(() => undefined);
+        await refreshMeetings();
+      }
+      setActiveAudioPath("");
       setCaptureState("idle");
     }
   };
 
   const handlePause = async () => {
-    if (!activeMeeting || !isRecording) return;
-
-    try {
-      setError("");
-      await invoke("stop_system_audio_capture");
-      setCaptureState("paused");
-    } catch (pauseError) {
-      setError(
-        pauseError instanceof Error ? pauseError.message : String(pauseError)
-      );
-    }
-  };
-
-  const handleResume = async () => {
-    if (!activeMeeting || !isPaused) return;
-
-    try {
-      setError("");
-      await startAudioCapture();
-      setCaptureState("recording");
-    } catch (resumeError) {
-      setError(
-        resumeError instanceof Error ? resumeError.message : String(resumeError)
-      );
-    }
+    setError(
+      "Pause is not available while durable meeting WAV capture is active. Stop the meeting to finalise audio and transcribe.",
+    );
   };
 
   const handleStop = async () => {
@@ -334,22 +332,57 @@ const Dashboard = () => {
     try {
       setCaptureState("stopping");
       setError("");
-      await invoke("stop_system_audio_capture").catch(() => undefined);
+      const capturedAudio = await invoke<CapturedMeetingAudio>(
+        "stop_meeting_audio_capture",
+        { meetingId: activeMeeting.id },
+      );
       const endedAt = Date.now();
-      const completedMeeting = await updateMeetingStatus(activeMeeting.id, "completed", endedAt);
+      const completedMeeting = await updateMeetingStatus(
+        activeMeeting.id,
+        "processing",
+        endedAt,
+      );
+      await upsertTranscriptionRun({
+        meetingId: activeMeeting.id,
+        audioPath: capturedAudio.audioPath,
+        provider: localTranscriptionProvider.id,
+        status: "queued",
+      });
       setCaptureState("idle");
       setActiveMeeting(null);
+      setActiveAudioPath("");
       setStartedAt(null);
       setElapsedSeconds(0);
       setMeetingTitle("Untitled meeting");
       await refreshMeetings();
 
-      if (completedMeeting && localAudioPath.trim()) {
-        await transcribeMeetingAudio(completedMeeting, localAudioPath);
+      if (completedMeeting) {
+        await transcribeMeetingAudio(completedMeeting, capturedAudio.audioPath);
       }
     } catch (stopError) {
-      setError(stopError instanceof Error ? stopError.message : String(stopError));
-      setCaptureState("paused");
+      const message =
+        stopError instanceof Error ? stopError.message : String(stopError);
+      setError(message);
+      await updateMeetingStatus(activeMeeting.id, "failed", Date.now()).catch(
+        () => undefined,
+      );
+      const run = transcriptionRunByMeetingId.get(activeMeeting.id);
+      const audioPath = run?.audioPath || activeAudioPath;
+      if (audioPath) {
+        await upsertTranscriptionRun({
+          meetingId: activeMeeting.id,
+          audioPath,
+          provider: localTranscriptionProvider.id,
+          status: "failed",
+          error: message,
+        }).catch(() => undefined);
+      }
+      setActiveMeeting(null);
+      setActiveAudioPath("");
+      setStartedAt(null);
+      setElapsedSeconds(0);
+      setCaptureState("idle");
+      await refreshMeetings();
     }
   };
 
@@ -368,14 +401,14 @@ const Dashboard = () => {
         if (!health.ok) {
           throw new Error(
             health.error ||
-              `Ollama is not available at ${health.baseUrl} with model ${health.model}.`
+              `Ollama is not available at ${health.baseUrl} with model ${health.model}.`,
           );
         }
 
         const detail = await getMeetingDetail(meeting.id);
         if (!detail || detail.transcriptSegments.length === 0) {
           throw new Error(
-            "No transcript segments are available. Transcribe the meeting before summarising."
+            "No transcript segments are available. Transcribe the meeting before summarising.",
           );
         }
 
@@ -389,12 +422,14 @@ const Dashboard = () => {
         setOllamaStatus(
           `Saved summary (${result.chunkCount} chunk${
             result.chunkCount === 1 ? "" : "s"
-          }) with ${result.model}.`
+          }) with ${result.model}.`,
         );
         await refreshMeetings();
       } catch (summaryError) {
         const message =
-          summaryError instanceof Error ? summaryError.message : String(summaryError);
+          summaryError instanceof Error
+            ? summaryError.message
+            : String(summaryError);
         setError(message);
         setOllamaStatus("Summarisation failed.");
       } finally {
@@ -405,12 +440,12 @@ const Dashboard = () => {
         });
       }
     },
-    [ollamaModel, refreshMeetings]
+    [ollamaModel, refreshMeetings],
   );
 
   const handleRetryTranscription = (meeting: Meeting) => {
     const run = transcriptionRunByMeetingId.get(meeting.id);
-    transcribeMeetingAudio(meeting, run?.audioPath || localAudioPath);
+    transcribeMeetingAudio(meeting, run?.audioPath || "");
   };
 
   useEffect(() => {
@@ -431,12 +466,6 @@ const Dashboard = () => {
     return () => window.clearInterval(timerId);
   }, [isActive, startedAt]);
 
-  useEffect(() => {
-    return () => {
-      invoke("stop_system_audio_capture").catch(() => undefined);
-    };
-  }, []);
-
   return (
     <PageLayout
       title="Meeting Capture"
@@ -449,7 +478,8 @@ const Dashboard = () => {
               <div>
                 <CardTitle className="text-2xl">Capture dashboard</CardTitle>
                 <CardDescription>
-                  Control recording, transcription, and local Ollama summarisation.
+                  Control recording, transcription, and local Ollama
+                  summarisation.
                 </CardDescription>
               </div>
               <Badge
@@ -457,11 +487,13 @@ const Dashboard = () => {
                 className={cn(
                   "border px-3 py-1",
                   isRecording && "border-red-500/20 bg-red-500/10 text-red-600",
-                  isPaused && "border-amber-500/20 bg-amber-500/10 text-amber-600",
-                  captureState === "idle" && "border-emerald-500/20 bg-emerald-500/10 text-emerald-600"
+                  captureState === "idle" &&
+                    "border-emerald-500/20 bg-emerald-500/10 text-emerald-600",
                 )}
               >
-                <RadioIcon className={cn("size-3", isRecording && "animate-pulse")} />
+                <RadioIcon
+                  className={cn("size-3", isRecording && "animate-pulse")}
+                />
                 {captureLabel}
               </Badge>
             </div>
@@ -483,19 +515,13 @@ const Dashboard = () => {
             </div>
 
             <div className="grid gap-4 md:grid-cols-2">
-              <div className="space-y-2">
-                <label className="text-sm font-medium" htmlFor="local-audio-path">
-                  Local audio file path for transcription
-                </label>
-                <Input
-                  id="local-audio-path"
-                  value={localAudioPath}
-                  onChange={(event) => setLocalAudioPath(event.target.value)}
-                  placeholder="/path/to/meeting.wav"
-                  className="h-11"
-                />
+              <div className="space-y-2 rounded-2xl border bg-background/70 p-4">
+                <p className="text-sm font-medium">Meeting audio file</p>
                 <p className="text-xs text-muted-foreground">
-                  MinuteSmith sends this path only to the local transcription provider. If no backend command is configured, a local placeholder segment is saved.
+                  Start Meeting creates
+                  meetings/&lt;meetingId&gt;/audio/system-audio.wav under local
+                  app data. Stop finalises the WAV and starts local
+                  transcription automatically.
                 </p>
               </div>
               <div className="space-y-2">
@@ -510,7 +536,8 @@ const Dashboard = () => {
                   className="h-11"
                 />
                 <p className="text-xs text-muted-foreground">
-                  Uses local Ollama at 127.0.0.1:11434, validates JSON schema, then saves summary, actions, and decisions locally.
+                  Uses local Ollama at 127.0.0.1:11434, validates JSON schema,
+                  then saves summary, actions, and decisions locally.
                 </p>
               </div>
             </div>
@@ -528,18 +555,24 @@ const Dashboard = () => {
                 <div className="mb-2 flex items-center gap-2 text-sm text-muted-foreground">
                   <MicIcon className="size-4" /> Microphone
                 </div>
-                <p className="truncate text-sm font-medium">{selectedMicName}</p>
+                <p className="truncate text-sm font-medium">
+                  {selectedMicName}
+                </p>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  {devices.input.length > 0 ? "Ready for meeting notes" : "Using system default"}
+                  {devices.input.length > 0
+                    ? "Ready for meeting notes"
+                    : "Using system default"}
                 </p>
               </div>
               <div className="rounded-2xl border bg-background/70 p-4">
                 <div className="mb-2 flex items-center gap-2 text-sm text-muted-foreground">
                   <HeadphonesIcon className="size-4" /> System audio
                 </div>
-                <p className="truncate text-sm font-medium">{selectedSystemAudioName}</p>
+                <p className="truncate text-sm font-medium">
+                  {selectedSystemAudioName}
+                </p>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  {isRecording ? "Capturing output audio" : isPaused ? "Paused" : "Ready"}
+                  {isRecording ? "Capturing output audio" : "Ready"}
                 </p>
               </div>
             </div>
@@ -576,12 +609,12 @@ const Dashboard = () => {
               <Button
                 size="lg"
                 variant="outline"
-                onClick={isPaused ? handleResume : handlePause}
+                onClick={handlePause}
                 disabled={!activeMeeting || captureState === "stopping"}
                 className="h-12 flex-1"
               >
-                {isPaused ? <PlayIcon className="size-4" /> : <PauseIcon className="size-4" />}
-                {isPaused ? "Resume" : "Pause"}
+                <PauseIcon className="size-4" />
+                Pause unavailable
               </Button>
               <Button
                 size="lg"
@@ -599,7 +632,9 @@ const Dashboard = () => {
         <Card>
           <CardHeader>
             <CardTitle>Capture status</CardTitle>
-            <CardDescription>Current meeting state and audio readiness.</CardDescription>
+            <CardDescription>
+              Current meeting state and audio readiness.
+            </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="rounded-2xl border bg-muted/30 p-4">
@@ -614,10 +649,13 @@ const Dashboard = () => {
                 </span>
               </div>
               <div className="mt-3 flex items-center justify-between gap-3">
-                <span className="text-sm text-muted-foreground">Transcription</span>
+                <span className="text-sm text-muted-foreground">
+                  Transcription
+                </span>
                 <span className="text-sm font-medium capitalize">
                   {activeMeeting
-                    ? transcriptionRunByMeetingId.get(activeMeeting.id)?.status ?? "idle"
+                    ? (transcriptionRunByMeetingId.get(activeMeeting.id)
+                        ?.status ?? "idle")
                     : "idle"}
                 </span>
               </div>
@@ -628,22 +666,37 @@ const Dashboard = () => {
                 <CheckCircle2Icon className="size-4 text-emerald-600" />
                 <div className="min-w-0">
                   <p className="text-sm font-medium">Mic status</p>
-                  <p className="truncate text-xs text-muted-foreground">{selectedMicName}</p>
+                  <p className="truncate text-xs text-muted-foreground">
+                    {selectedMicName}
+                  </p>
                 </div>
               </div>
               <div className="flex items-center gap-3 rounded-2xl border p-3">
-                <CheckCircle2Icon className={cn("size-4", isRecording ? "text-red-600" : "text-emerald-600")} />
+                <CheckCircle2Icon
+                  className={cn(
+                    "size-4",
+                    isRecording ? "text-red-600" : "text-emerald-600",
+                  )}
+                />
                 <div className="min-w-0">
                   <p className="text-sm font-medium">System audio status</p>
                   <p className="truncate text-xs text-muted-foreground">
-                    {selectedSystemAudioName} · {isRecording ? "capturing" : isPaused ? "paused" : "ready"}
+                    {selectedSystemAudioName} ·{" "}
+                    {isRecording ? "capturing" : "ready"}
                   </p>
                 </div>
               </div>
             </div>
 
-            <Button variant="outline" onClick={loadAudioDevices} disabled={isLoadingDevices} className="w-full">
-              {isLoadingDevices ? "Refreshing audio devices..." : "Refresh audio status"}
+            <Button
+              variant="outline"
+              onClick={loadAudioDevices}
+              disabled={isLoadingDevices}
+              className="w-full"
+            >
+              {isLoadingDevices
+                ? "Refreshing audio devices..."
+                : "Refresh audio status"}
             </Button>
           </CardContent>
         </Card>
@@ -654,7 +707,9 @@ const Dashboard = () => {
           <div className="flex items-center justify-between gap-3">
             <div>
               <CardTitle>Recent meetings</CardTitle>
-              <CardDescription>Latest meeting captures stored locally.</CardDescription>
+              <CardDescription>
+                Latest meeting captures stored locally.
+              </CardDescription>
             </div>
             <Button variant="outline" size="sm" onClick={refreshMeetings}>
               Refresh
@@ -664,12 +719,15 @@ const Dashboard = () => {
         <CardContent>
           {recentMeetings.length === 0 ? (
             <div className="rounded-2xl border border-dashed p-8 text-center text-sm text-muted-foreground">
-              No meetings captured yet. Start a meeting to create the first entry.
+              No meetings captured yet. Start a meeting to create the first
+              entry.
             </div>
           ) : (
             <div className="divide-y rounded-2xl border">
               {recentMeetings.map((meeting) => {
-                const transcriptionRun = transcriptionRunByMeetingId.get(meeting.id);
+                const transcriptionRun = transcriptionRunByMeetingId.get(
+                  meeting.id,
+                );
                 const isTranscribing = transcribingMeetingIds.has(meeting.id);
                 const isSummarizing = summarizingMeetingIds.has(meeting.id);
                 const transcriptionStatus = transcriptionRun?.status ?? "idle";
@@ -686,38 +744,68 @@ const Dashboard = () => {
                       </div>
                       <p className="mt-1 text-xs text-muted-foreground">
                         {formatMeetingTime(meeting.startedAt)}
-                        {meeting.endedAt ? ` · ${formatDuration(Math.floor((meeting.endedAt - (meeting.startedAt ?? meeting.createdAt)) / 1000))}` : ""}
+                        {meeting.endedAt
+                          ? ` · ${formatDuration(Math.floor((meeting.endedAt - (meeting.startedAt ?? meeting.createdAt)) / 1000))}`
+                          : ""}
                       </p>
                       <p className="mt-1 truncate text-xs text-muted-foreground">
-                        Transcription: <span className="capitalize">{transcriptionStatus}</span>
-                        {transcriptionRun?.attempts ? ` · ${transcriptionRun.attempts} attempt${transcriptionRun.attempts === 1 ? "" : "s"}` : ""}
-                        {transcriptionRun?.audioPath ? ` · ${transcriptionRun.audioPath}` : ""}
+                        Transcription:{" "}
+                        <span className="capitalize">
+                          {transcriptionStatus}
+                        </span>
+                        {transcriptionRun?.attempts
+                          ? ` · ${transcriptionRun.attempts} attempt${transcriptionRun.attempts === 1 ? "" : "s"}`
+                          : ""}
+                        {transcriptionRun?.audioPath
+                          ? ` · ${transcriptionRun.audioPath}`
+                          : ""}
                         {isSummarizing ? " · summarising with Ollama" : ""}
                       </p>
                       {transcriptionRun?.error ? (
-                        <p className="mt-1 text-xs text-destructive">{transcriptionRun.error}</p>
+                        <p className="mt-1 text-xs text-destructive">
+                          {transcriptionRun.error}
+                        </p>
                       ) : null}
                     </div>
                     <div className="flex shrink-0 items-center gap-2">
-                      <Badge variant="outline" className={cn("capitalize", statusTone[meeting.status])}>
+                      <Badge
+                        variant="outline"
+                        className={cn("capitalize", statusTone[meeting.status])}
+                      >
                         {meeting.status}
                       </Badge>
                       <Button
                         variant="outline"
                         size="sm"
                         onClick={() => handleRetryTranscription(meeting)}
-                        disabled={isTranscribing || (!transcriptionRun?.audioPath && !localAudioPath.trim())}
+                        disabled={
+                          isTranscribing || !transcriptionRun?.audioPath
+                        }
                       >
-                        <RotateCcwIcon className={cn("size-3", isTranscribing && "animate-spin")} />
-                        {transcriptionStatus === "failed" ? "Retry" : "Transcribe"}
+                        <RotateCcwIcon
+                          className={cn(
+                            "size-3",
+                            isTranscribing && "animate-spin",
+                          )}
+                        />
+                        {transcriptionStatus === "failed"
+                          ? "Retry"
+                          : "Transcribe"}
                       </Button>
                       <Button
                         variant="outline"
                         size="sm"
                         onClick={() => summarizeMeeting(meeting)}
-                        disabled={isSummarizing || transcriptionStatus !== "completed"}
+                        disabled={
+                          isSummarizing || transcriptionStatus !== "completed"
+                        }
                       >
-                        <BrainCircuitIcon className={cn("size-3", isSummarizing && "animate-pulse")} />
+                        <BrainCircuitIcon
+                          className={cn(
+                            "size-3",
+                            isSummarizing && "animate-pulse",
+                          )}
+                        />
                         Summarise
                       </Button>
                     </div>

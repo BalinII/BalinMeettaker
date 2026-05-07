@@ -3,6 +3,7 @@ mod activate;
 mod api;
 mod capture;
 mod db;
+mod meeting_audio;
 mod shortcuts;
 mod transcription;
 mod window;
@@ -39,6 +40,7 @@ pub fn run() {
         )
         .manage(AudioState::default())
         .manage(CaptureState::default())
+        .manage(meeting_audio::MeetingAudioState::default())
         .manage(shortcuts::WindowVisibility {
             is_hidden: Mutex::new(false),
         })
@@ -97,6 +99,8 @@ pub fn run() {
             speaker::get_audio_sample_rate,
             speaker::get_input_devices,
             speaker::get_output_devices,
+            meeting_audio::start_meeting_audio_capture,
+            meeting_audio::stop_meeting_audio_capture,
             transcription::transcribe_audio_file_local,
         ])
         .setup(|app| {

@@ -13,6 +13,8 @@ import type {
   Summary,
   TranscriptSegment,
   TranscriptSegmentInput,
+  TranscriptionRun,
+  TranscriptionStatus,
 } from "@/types";
 
 type JsonObject = Record<string, unknown>;
@@ -51,6 +53,19 @@ interface DbTranscriptSegment {
   updated_at: number;
 }
 
+interface DbTranscriptionRun {
+  meeting_id: string;
+  audio_path: string;
+  provider: string;
+  status: TranscriptionStatus;
+  error: string | null;
+  attempts: number;
+  last_started_at: number | null;
+  completed_at: number | null;
+  created_at: number;
+  updated_at: number;
+}
+
 interface DbSummary {
   id: string;
   meeting_id: string;
@@ -85,6 +100,14 @@ interface DbDecision {
   updated_at: number;
 }
 
+const TRANSCRIPTION_STATUSES: TranscriptionStatus[] = [
+  "idle",
+  "queued",
+  "running",
+  "completed",
+  "failed",
+];
+
 const MEETING_STATUSES: MeetingStatus[] = [
   "scheduled",
   "recording",
@@ -111,6 +134,12 @@ function safeJsonParse<T>(jsonString: string | null, fallback: T): T {
 function validateMeetingStatus(status: MeetingStatus): void {
   if (!MEETING_STATUSES.includes(status)) {
     throw new Error(`Invalid meeting status: ${status}`);
+  }
+}
+
+function validateTranscriptionStatus(status: TranscriptionStatus): void {
+  if (!TRANSCRIPTION_STATUSES.includes(status)) {
+    throw new Error(`Invalid transcription status: ${status}`);
   }
 }
 
@@ -155,6 +184,21 @@ function mapTranscriptSegment(row: DbTranscriptSegment): TranscriptSegment {
     text: row.text,
     confidence: row.confidence,
     metadata: safeJsonParse<JsonObject | null>(row.metadata_json, null),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapTranscriptionRun(row: DbTranscriptionRun): TranscriptionRun {
+  return {
+    meetingId: row.meeting_id,
+    audioPath: row.audio_path,
+    provider: row.provider,
+    status: row.status,
+    error: row.error,
+    attempts: row.attempts,
+    lastStartedAt: row.last_started_at,
+    completedAt: row.completed_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -299,10 +343,14 @@ export async function getMeetingDetail(
   if (!meeting) return null;
 
   const db = await getDatabase();
-  const [participants, transcriptSegments, summaries, actions, decisions] =
+  const [participants, transcriptionRuns, transcriptSegments, summaries, actions, decisions] =
     await Promise.all([
       db.select<DbParticipant[]>(
         "SELECT * FROM participants WHERE meeting_id = ? ORDER BY name ASC",
+        [meetingId]
+      ),
+      db.select<DbTranscriptionRun[]>(
+        "SELECT * FROM transcription_runs WHERE meeting_id = ?",
         [meetingId]
       ),
       db.select<DbTranscriptSegment[]>(
@@ -325,12 +373,97 @@ export async function getMeetingDetail(
 
   return {
     ...meeting,
+    transcriptionRun: transcriptionRuns[0]
+      ? mapTranscriptionRun(transcriptionRuns[0])
+      : null,
     participants: participants.map(mapParticipant),
     transcriptSegments: transcriptSegments.map(mapTranscriptSegment),
     summaries: summaries.map(mapSummary),
     actions: actions.map(mapAction),
     decisions: decisions.map(mapDecision),
   };
+}
+
+export async function upsertTranscriptionRun(input: {
+  meetingId: string;
+  audioPath: string;
+  provider: string;
+  status: TranscriptionStatus;
+  error?: string | null;
+  incrementAttempts?: boolean;
+  lastStartedAt?: number | null;
+  completedAt?: number | null;
+}): Promise<TranscriptionRun> {
+  assertNonEmpty(input.meetingId, "Meeting id");
+  assertNonEmpty(input.audioPath, "Audio path");
+  assertNonEmpty(input.provider, "Transcription provider");
+  validateTranscriptionStatus(input.status);
+
+  const db = await getDatabase();
+  const now = Date.now();
+  await db.execute(
+    `INSERT INTO transcription_runs (meeting_id, audio_path, provider, status, error, attempts, last_started_at, completed_at, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(meeting_id) DO UPDATE SET
+       audio_path = excluded.audio_path,
+       provider = excluded.provider,
+       status = excluded.status,
+       error = excluded.error,
+       attempts = transcription_runs.attempts + ?,
+       last_started_at = COALESCE(excluded.last_started_at, transcription_runs.last_started_at),
+       completed_at = excluded.completed_at,
+       updated_at = excluded.updated_at`,
+    [
+      input.meetingId,
+      input.audioPath,
+      input.provider,
+      input.status,
+      input.error ?? null,
+      input.incrementAttempts ? 1 : 0,
+      input.lastStartedAt ?? null,
+      input.completedAt ?? null,
+      now,
+      now,
+      input.incrementAttempts ? 1 : 0,
+    ]
+  );
+
+  const run = await getTranscriptionRun(input.meetingId);
+  if (!run) {
+    throw new Error("Failed to save transcription run");
+  }
+  return run;
+}
+
+export async function getTranscriptionRun(
+  meetingId: string
+): Promise<TranscriptionRun | null> {
+  assertNonEmpty(meetingId, "Meeting id");
+
+  const db = await getDatabase();
+  const rows = await db.select<DbTranscriptionRun[]>(
+    "SELECT * FROM transcription_runs WHERE meeting_id = ?",
+    [meetingId]
+  );
+
+  return rows[0] ? mapTranscriptionRun(rows[0]) : null;
+}
+
+export async function listTranscriptionRuns(): Promise<TranscriptionRun[]> {
+  const db = await getDatabase();
+  const rows = await db.select<DbTranscriptionRun[]>(
+    "SELECT * FROM transcription_runs ORDER BY updated_at DESC"
+  );
+  return rows.map(mapTranscriptionRun);
+}
+
+export async function deleteTranscriptSegments(meetingId: string): Promise<void> {
+  assertNonEmpty(meetingId, "Meeting id");
+
+  const db = await getDatabase();
+  await db.execute("DELETE FROM transcript_segments WHERE meeting_id = ?", [
+    meetingId,
+  ]);
 }
 
 export async function saveTranscriptSegments(

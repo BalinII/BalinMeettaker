@@ -116,8 +116,19 @@ pub struct SpeakerInput {
 
 impl SpeakerInput {
     pub fn new(device_id: Option<String>) -> Result<Self> {
-        // Store the device_id for later use in stream()
+        // Validate the render device up front so meeting capture can surface
+        // "no audio input found" / "device unavailable" before creating a DB run.
         let device_id = device_id.filter(|id| !id.is_empty() && id != "default");
+        if let Some(ref id) = device_id {
+            if find_device_by_id(&Direction::Render, id).is_none() {
+                return Err(anyhow::anyhow!(
+                    "selected Windows system audio device was not found"
+                ));
+            }
+        } else {
+            get_default_device(&Direction::Render)
+                .map_err(|error| anyhow::anyhow!("no system audio output found: {error}"))?;
+        }
         Ok(Self { device_id })
     }
 

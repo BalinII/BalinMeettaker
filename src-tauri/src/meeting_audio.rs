@@ -52,11 +52,9 @@ pub async fn start_meeting_audio_capture(
         }
     }
 
-    let audio_path = build_meeting_audio_path(&app, &meeting_id)?;
-    if let Some(parent) = audio_path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|error| format!("Failed to create local meeting audio folder: {error}"))?;
-    }
+    let artifact_paths = build_meeting_artifact_paths(&app, &meeting_id)?;
+    create_meeting_artifact_dirs(&artifact_paths)?;
+    let audio_path = artifact_paths.audio_path;
 
     let input = SpeakerInput::new_with_device(device_id).map_err(|error| {
         error!("Failed to create meeting speaker input: {}", error);
@@ -220,17 +218,60 @@ fn validate_sample_rate(sample_rate: u32) -> Result<(), String> {
     Ok(())
 }
 
-fn build_meeting_audio_path(app: &AppHandle, meeting_id: &str) -> Result<PathBuf, String> {
+#[derive(Debug, Clone)]
+struct MeetingArtifactPaths {
+    meeting_dir: PathBuf,
+    audio_dir: PathBuf,
+    transcript_dir: PathBuf,
+    summary_dir: PathBuf,
+    audio_path: PathBuf,
+}
+
+fn build_meeting_artifact_paths(
+    app: &AppHandle,
+    meeting_id: &str,
+) -> Result<MeetingArtifactPaths, String> {
     let app_data_dir = app
         .path()
         .app_data_dir()
         .map_err(|error| format!("Failed to locate local app data directory: {error}"))?;
 
-    Ok(app_data_dir
-        .join("meetings")
-        .join(meeting_id)
-        .join("audio")
-        .join("system-audio.wav"))
+    Ok(build_meeting_artifact_paths_from_base(
+        &app_data_dir,
+        meeting_id,
+    ))
+}
+
+fn build_meeting_artifact_paths_from_base(
+    base_dir: &Path,
+    meeting_id: &str,
+) -> MeetingArtifactPaths {
+    let meeting_dir = base_dir.join("meetings").join(meeting_id);
+    let audio_dir = meeting_dir.join("audio");
+    let transcript_dir = meeting_dir.join("transcript");
+    let summary_dir = meeting_dir.join("summary");
+    let audio_path = audio_dir.join("system-audio.wav");
+
+    MeetingArtifactPaths {
+        meeting_dir,
+        audio_dir,
+        transcript_dir,
+        summary_dir,
+        audio_path,
+    }
+}
+
+fn create_meeting_artifact_dirs(paths: &MeetingArtifactPaths) -> Result<(), String> {
+    for dir in [
+        &paths.meeting_dir,
+        &paths.audio_dir,
+        &paths.transcript_dir,
+        &paths.summary_dir,
+    ] {
+        fs::create_dir_all(dir)
+            .map_err(|error| format!("Failed to create local meeting artifact folder: {error}"))?;
+    }
+    Ok(())
 }
 
 fn create_wav_writer(
@@ -277,5 +318,25 @@ mod tests {
         assert!(validate_sample_rate(16_000).is_ok());
         assert!(validate_sample_rate(7_999).is_err());
         assert!(validate_sample_rate(96_001).is_err());
+    }
+
+    #[test]
+    fn builds_stable_local_meeting_artifact_paths() {
+        let paths =
+            build_meeting_artifact_paths_from_base(Path::new("/tmp/minutesmith"), "abc_123");
+
+        assert_eq!(
+            paths.audio_dir,
+            Path::new("/tmp/minutesmith").join("meetings/abc_123/audio")
+        );
+        assert_eq!(
+            paths.transcript_dir,
+            Path::new("/tmp/minutesmith").join("meetings/abc_123/transcript")
+        );
+        assert_eq!(
+            paths.summary_dir,
+            Path::new("/tmp/minutesmith").join("meetings/abc_123/summary")
+        );
+        assert_eq!(paths.audio_path, paths.audio_dir.join("system-audio.wav"));
     }
 }

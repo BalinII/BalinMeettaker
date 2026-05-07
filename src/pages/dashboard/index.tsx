@@ -34,6 +34,7 @@ import {
   listMeetings,
   listTranscriptionRuns,
   saveTranscriptSegments,
+  updateMeetingAudioPath,
   updateMeetingStatus,
   upsertTranscriptionRun,
 } from "@/lib/database";
@@ -124,6 +125,8 @@ const Dashboard = () => {
   const [isLoadingDevices, setIsLoadingDevices] = useState(false);
   const [error, setError] = useState("");
   const [ollamaStatus, setOllamaStatus] = useState("");
+  const [manualMeetingId, setManualMeetingId] = useState("");
+  const [manualAudioPath, setManualAudioPath] = useState("");
 
   const isRecording = captureState === "recording";
   const isActive = captureState === "recording";
@@ -257,6 +260,20 @@ const Dashboard = () => {
 
   const startAudioCapture = useCallback(
     async (meetingId: string) => {
+      if (captureState !== "idle") {
+        throw new Error(
+          "Capture already running. Stop the current meeting before starting another one.",
+        );
+      }
+
+      const outputDevices = await invoke<AudioDevice[]>("get_output_devices");
+      if (outputDevices.length === 0) {
+        throw new Error(
+          "No audio input found. MinuteSmith could not find a system audio output device to capture.",
+        );
+      }
+      setDevices((current) => ({ ...current, output: outputDevices }));
+
       const hasAccess = await invoke<boolean>("check_system_audio_access");
 
       if (!hasAccess) {
@@ -274,7 +291,7 @@ const Dashboard = () => {
             : null,
       });
     },
-    [selectedAudioDevices.output.id],
+    [captureState, selectedAudioDevices.output.id],
   );
 
   const handleStartMeeting = async () => {
@@ -290,12 +307,6 @@ const Dashboard = () => {
       });
       createdMeeting = meeting;
       const capture = await startAudioCapture(meeting.id);
-      await upsertTranscriptionRun({
-        meetingId: meeting.id,
-        audioPath: capture.audioPath,
-        provider: localTranscriptionProvider.id,
-        status: "queued",
-      });
 
       setActiveMeeting(meeting);
       setActiveAudioPath(capture.audioPath);
@@ -327,7 +338,10 @@ const Dashboard = () => {
   };
 
   const handleStop = async () => {
-    if (!activeMeeting) return;
+    if (!activeMeeting) {
+      setError("Stop called when no meeting capture is running.");
+      return;
+    }
 
     try {
       setCaptureState("stopping");
@@ -337,6 +351,7 @@ const Dashboard = () => {
         { meetingId: activeMeeting.id },
       );
       const endedAt = Date.now();
+      await updateMeetingAudioPath(activeMeeting.id, capturedAudio.audioPath);
       const completedMeeting = await updateMeetingStatus(
         activeMeeting.id,
         "processing",
@@ -445,13 +460,39 @@ const Dashboard = () => {
 
   const handleRetryTranscription = (meeting: Meeting) => {
     const run = transcriptionRunByMeetingId.get(meeting.id);
-    transcribeMeetingAudio(meeting, run?.audioPath || "");
+    transcribeMeetingAudio(meeting, run?.audioPath || meeting.audioPath || "");
+  };
+
+  const handleManualTranscription = async () => {
+    const meetingId = manualMeetingId.trim();
+    const audioPath = manualAudioPath.trim();
+    if (!meetingId || !audioPath) {
+      setError(
+        "Advanced transcription requires a meeting id and local audio path.",
+      );
+      return;
+    }
+
+    const meeting = await getMeetingDetail(meetingId);
+    if (!meeting) {
+      setError("No meeting found for the advanced transcription meeting id.");
+      return;
+    }
+
+    await updateMeetingAudioPath(meeting.id, audioPath);
+    await transcribeMeetingAudio({ ...meeting, audioPath }, audioPath);
   };
 
   useEffect(() => {
     refreshMeetings();
     loadAudioDevices();
   }, [loadAudioDevices, refreshMeetings]);
+
+  useEffect(() => {
+    if (!manualMeetingId && recentMeetings[0]) {
+      setManualMeetingId(recentMeetings[0].id);
+    }
+  }, [manualMeetingId, recentMeetings]);
 
   useEffect(() => {
     if (!startedAt || !isActive) return;
@@ -518,10 +559,13 @@ const Dashboard = () => {
               <div className="space-y-2 rounded-2xl border bg-background/70 p-4">
                 <p className="text-sm font-medium">Meeting audio file</p>
                 <p className="text-xs text-muted-foreground">
-                  Start Meeting creates
-                  meetings/&lt;meetingId&gt;/audio/system-audio.wav under local
-                  app data. Stop finalises the WAV and starts local
-                  transcription automatically.
+                  Start Meeting creates meetings/&lt;meetingId&gt;/audio/,
+                  transcript/, and summary/ under local app data. Stop finalises
+                  audio/system-audio.wav, stores that path on the meeting, and
+                  starts local transcription automatically.
+                </p>
+                <p className="truncate text-xs font-medium text-foreground">
+                  {activeAudioPath || "No active audio file yet"}
                 </p>
               </div>
               <div className="space-y-2">
@@ -643,9 +687,25 @@ const Dashboard = () => {
                 <Badge variant="outline">{captureLabel}</Badge>
               </div>
               <div className="mt-3 flex items-center justify-between gap-3">
+                <span className="text-sm text-muted-foreground">Recording</span>
+                <span className="text-sm font-medium">
+                  {isRecording ? "recording" : "not recording"}
+                </span>
+              </div>
+              <div className="mt-3 flex items-center justify-between gap-3">
                 <span className="text-sm text-muted-foreground">Started</span>
                 <span className="text-sm font-medium">
                   {startedAt ? formatMeetingTime(startedAt) : "Not active"}
+                </span>
+              </div>
+              <div className="mt-3 flex items-center justify-between gap-3">
+                <span className="text-sm text-muted-foreground">Audio file</span>
+                <span className="max-w-[190px] truncate text-right text-sm font-medium">
+                  {activeAudioPath
+                    ? captureState === "recording"
+                      ? "writing WAV safely"
+                      : activeAudioPath
+                    : "not created"}
                 </span>
               </div>
               <div className="mt-3 flex items-center justify-between gap-3">
@@ -655,7 +715,7 @@ const Dashboard = () => {
                 <span className="text-sm font-medium capitalize">
                   {activeMeeting
                     ? (transcriptionRunByMeetingId.get(activeMeeting.id)
-                        ?.status ?? "idle")
+                        ?.status ?? "starts after stop")
                     : "idle"}
                 </span>
               </div>
@@ -698,6 +758,50 @@ const Dashboard = () => {
                 ? "Refreshing audio devices..."
                 : "Refresh audio status"}
             </Button>
+
+            <details className="rounded-2xl border bg-muted/20 p-4 text-sm">
+              <summary className="cursor-pointer font-medium">
+                Advanced/dev: transcribe a local audio path manually
+              </summary>
+              <div className="mt-4 space-y-3">
+                <label
+                  className="text-xs font-medium"
+                  htmlFor="manual-meeting-id"
+                >
+                  Meeting id
+                </label>
+                <Input
+                  id="manual-meeting-id"
+                  value={manualMeetingId}
+                  onChange={(event) => setManualMeetingId(event.target.value)}
+                  placeholder="Existing meeting id"
+                />
+                <label
+                  className="text-xs font-medium"
+                  htmlFor="manual-audio-path"
+                >
+                  Local audio path
+                </label>
+                <Input
+                  id="manual-audio-path"
+                  value={manualAudioPath}
+                  onChange={(event) => setManualAudioPath(event.target.value)}
+                  placeholder="/path/to/meeting.wav"
+                />
+                <Button
+                  variant="outline"
+                  onClick={handleManualTranscription}
+                  disabled={!manualMeetingId.trim() || !manualAudioPath.trim()}
+                  className="w-full"
+                >
+                  Transcribe manual path
+                </Button>
+                <p className="text-xs text-muted-foreground">
+                  This bypass is only for recovery and provider development;
+                  normal meetings use the saved audio artefact automatically.
+                </p>
+              </div>
+            </details>
           </CardContent>
         </Card>
       </section>
@@ -756,8 +860,8 @@ const Dashboard = () => {
                         {transcriptionRun?.attempts
                           ? ` · ${transcriptionRun.attempts} attempt${transcriptionRun.attempts === 1 ? "" : "s"}`
                           : ""}
-                        {transcriptionRun?.audioPath
-                          ? ` · ${transcriptionRun.audioPath}`
+                        {transcriptionRun?.audioPath || meeting.audioPath
+                          ? ` · ${transcriptionRun?.audioPath ?? meeting.audioPath}`
                           : ""}
                         {isSummarizing ? " · summarising with Ollama" : ""}
                       </p>
@@ -779,7 +883,8 @@ const Dashboard = () => {
                         size="sm"
                         onClick={() => handleRetryTranscription(meeting)}
                         disabled={
-                          isTranscribing || !transcriptionRun?.audioPath
+                          isTranscribing ||
+                            !(transcriptionRun?.audioPath || meeting.audioPath)
                         }
                       >
                         <RotateCcwIcon

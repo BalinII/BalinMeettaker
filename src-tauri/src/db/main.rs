@@ -31,6 +31,13 @@ pub fn migrations() -> Vec<Migration> {
             sql: include_str!("migrations/transcription-runs.sql"),
             kind: MigrationKind::Up,
         },
+        // Migration 5: Store the durable local meeting audio path on meetings
+        Migration {
+            version: 5,
+            description: "add_meeting_audio_path",
+            sql: include_str!("migrations/meeting-audio-path.sql"),
+            kind: MigrationKind::Up,
+        },
     ]
 }
 
@@ -80,5 +87,19 @@ mod tests {
             .sql
             .contains("CREATE TABLE IF NOT EXISTS transcription_runs"));
         assert!(transcription_migration.sql.contains("attempts"));
+    }
+
+    #[test]
+    fn includes_meeting_audio_path_migration() {
+        let all_migrations = migrations();
+        let audio_path_migration = all_migrations
+            .iter()
+            .find(|migration| migration.version == 5)
+            .expect("meeting audio path migration should be registered");
+
+        assert_eq!(audio_path_migration.description, "add_meeting_audio_path");
+        assert!(audio_path_migration
+            .sql
+            .contains("ALTER TABLE meetings ADD COLUMN audio_path TEXT"));
     }
 }

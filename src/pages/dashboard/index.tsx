@@ -9,6 +9,7 @@ import {
   PauseIcon,
   PlayIcon,
   RadioIcon,
+  RotateCcwIcon,
   SquareIcon,
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
@@ -27,10 +28,15 @@ import { useApp } from "@/contexts";
 import { cn } from "@/lib/utils";
 import {
   createMeeting,
+  deleteTranscriptSegments,
   listMeetings,
+  listTranscriptionRuns,
+  saveTranscriptSegments,
   updateMeetingStatus,
+  upsertTranscriptionRun,
 } from "@/lib/database";
-import type { Meeting } from "@/types";
+import { localTranscriptionProvider } from "@/lib/transcription";
+import type { Meeting, TranscriptionRun } from "@/types";
 
 type CaptureState = "idle" | "recording" | "paused" | "stopping";
 
@@ -97,6 +103,11 @@ const Dashboard = () => {
   const [startedAt, setStartedAt] = useState<number | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [recentMeetings, setRecentMeetings] = useState<Meeting[]>([]);
+  const [transcriptionRuns, setTranscriptionRuns] = useState<TranscriptionRun[]>([]);
+  const [localAudioPath, setLocalAudioPath] = useState("");
+  const [transcribingMeetingIds, setTranscribingMeetingIds] = useState<Set<string>>(
+    () => new Set()
+  );
   const [devices, setDevices] = useState<{
     input: AudioDevice[];
     output: AudioDevice[];
@@ -129,12 +140,93 @@ const Dashboard = () => {
 
   const refreshMeetings = useCallback(async () => {
     try {
-      const meetings = await listMeetings();
+      const [meetings, runs] = await Promise.all([
+        listMeetings(),
+        listTranscriptionRuns(),
+      ]);
       setRecentMeetings(meetings.slice(0, 6));
+      setTranscriptionRuns(runs);
     } catch (meetingError) {
       console.error("Failed to load meetings:", meetingError);
     }
   }, []);
+
+  const transcriptionRunByMeetingId = useMemo(
+    () =>
+      new Map(
+        transcriptionRuns.map((run) => [run.meetingId, run] as const)
+      ),
+    [transcriptionRuns]
+  );
+
+  const transcribeMeetingAudio = useCallback(
+    async (meeting: Meeting, audioPath: string) => {
+      const trimmedAudioPath = audioPath.trim();
+      if (!trimmedAudioPath) {
+        setError("Enter a local audio file path before starting transcription.");
+        return;
+      }
+
+      setError("");
+      setTranscribingMeetingIds((current) => {
+        const next = new Set(current);
+        next.add(meeting.id);
+        return next;
+      });
+
+      try {
+        await upsertTranscriptionRun({
+          meetingId: meeting.id,
+          audioPath: trimmedAudioPath,
+          provider: localTranscriptionProvider.id,
+          status: "running",
+          incrementAttempts: true,
+          lastStartedAt: Date.now(),
+        });
+        await updateMeetingStatus(meeting.id, "processing");
+        await refreshMeetings();
+
+        const segments = await localTranscriptionProvider.transcribeAudioFile(
+          meeting.id,
+          trimmedAudioPath
+        );
+        await deleteTranscriptSegments(meeting.id);
+        await saveTranscriptSegments(meeting.id, segments);
+        await upsertTranscriptionRun({
+          meetingId: meeting.id,
+          audioPath: trimmedAudioPath,
+          provider: localTranscriptionProvider.id,
+          status: "completed",
+          completedAt: Date.now(),
+        });
+        await updateMeetingStatus(meeting.id, "completed", meeting.endedAt ?? Date.now());
+      } catch (transcriptionError) {
+        const message =
+          transcriptionError instanceof Error
+            ? transcriptionError.message
+            : String(transcriptionError);
+        await upsertTranscriptionRun({
+          meetingId: meeting.id,
+          audioPath: trimmedAudioPath,
+          provider: localTranscriptionProvider.id,
+          status: "failed",
+          error: message,
+        }).catch(() => undefined);
+        await updateMeetingStatus(meeting.id, "failed", meeting.endedAt ?? Date.now()).catch(
+          () => undefined
+        );
+        setError(message);
+      } finally {
+        setTranscribingMeetingIds((current) => {
+          const next = new Set(current);
+          next.delete(meeting.id);
+          return next;
+        });
+        await refreshMeetings();
+      }
+    },
+    [refreshMeetings]
+  );
 
   const loadAudioDevices = useCallback(async () => {
     setIsLoadingDevices(true);
@@ -231,17 +323,27 @@ const Dashboard = () => {
       setCaptureState("stopping");
       setError("");
       await invoke("stop_system_audio_capture").catch(() => undefined);
-      await updateMeetingStatus(activeMeeting.id, "completed", Date.now());
+      const endedAt = Date.now();
+      const completedMeeting = await updateMeetingStatus(activeMeeting.id, "completed", endedAt);
       setCaptureState("idle");
       setActiveMeeting(null);
       setStartedAt(null);
       setElapsedSeconds(0);
       setMeetingTitle("Untitled meeting");
       await refreshMeetings();
+
+      if (completedMeeting && localAudioPath.trim()) {
+        await transcribeMeetingAudio(completedMeeting, localAudioPath);
+      }
     } catch (stopError) {
       setError(stopError instanceof Error ? stopError.message : String(stopError));
       setCaptureState("paused");
     }
+  };
+
+  const handleRetryTranscription = (meeting: Meeting) => {
+    const run = transcriptionRunByMeetingId.get(meeting.id);
+    transcribeMeetingAudio(meeting, run?.audioPath || localAudioPath);
   };
 
   useEffect(() => {
@@ -311,6 +413,22 @@ const Dashboard = () => {
                 placeholder="Weekly product sync"
                 className="h-12 text-lg"
               />
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium" htmlFor="local-audio-path">
+                Local audio file path for transcription
+              </label>
+              <Input
+                id="local-audio-path"
+                value={localAudioPath}
+                onChange={(event) => setLocalAudioPath(event.target.value)}
+                placeholder="/path/to/meeting.wav"
+                className="h-11"
+              />
+              <p className="text-xs text-muted-foreground">
+                MinuteSmith sends this path only to the local transcription provider. If no backend command is configured, a local placeholder segment is saved.
+              </p>
             </div>
 
             <div className="grid gap-3 md:grid-cols-3">
@@ -401,6 +519,14 @@ const Dashboard = () => {
                   {startedAt ? formatMeetingTime(startedAt) : "Not active"}
                 </span>
               </div>
+              <div className="mt-3 flex items-center justify-between gap-3">
+                <span className="text-sm text-muted-foreground">Transcription</span>
+                <span className="text-sm font-medium capitalize">
+                  {activeMeeting
+                    ? transcriptionRunByMeetingId.get(activeMeeting.id)?.status ?? "idle"
+                    : "idle"}
+                </span>
+              </div>
             </div>
 
             <div className="space-y-3">
@@ -448,26 +574,51 @@ const Dashboard = () => {
             </div>
           ) : (
             <div className="divide-y rounded-2xl border">
-              {recentMeetings.map((meeting) => (
-                <div
-                  key={meeting.id}
-                  className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between"
-                >
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <CalendarClockIcon className="size-4 text-muted-foreground" />
-                      <p className="truncate font-medium">{meeting.title}</p>
+              {recentMeetings.map((meeting) => {
+                const transcriptionRun = transcriptionRunByMeetingId.get(meeting.id);
+                const isTranscribing = transcribingMeetingIds.has(meeting.id);
+                const transcriptionStatus = transcriptionRun?.status ?? "idle";
+
+                return (
+                  <div
+                    key={meeting.id}
+                    className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between"
+                  >
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <CalendarClockIcon className="size-4 text-muted-foreground" />
+                        <p className="truncate font-medium">{meeting.title}</p>
+                      </div>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {formatMeetingTime(meeting.startedAt)}
+                        {meeting.endedAt ? ` · ${formatDuration(Math.floor((meeting.endedAt - (meeting.startedAt ?? meeting.createdAt)) / 1000))}` : ""}
+                      </p>
+                      <p className="mt-1 truncate text-xs text-muted-foreground">
+                        Transcription: <span className="capitalize">{transcriptionStatus}</span>
+                        {transcriptionRun?.attempts ? ` · ${transcriptionRun.attempts} attempt${transcriptionRun.attempts === 1 ? "" : "s"}` : ""}
+                        {transcriptionRun?.audioPath ? ` · ${transcriptionRun.audioPath}` : ""}
+                      </p>
+                      {transcriptionRun?.error ? (
+                        <p className="mt-1 text-xs text-destructive">{transcriptionRun.error}</p>
+                      ) : null}
                     </div>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {formatMeetingTime(meeting.startedAt)}
-                      {meeting.endedAt ? ` · ${formatDuration(Math.floor((meeting.endedAt - (meeting.startedAt ?? meeting.createdAt)) / 1000))}` : ""}
-                    </p>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <Badge variant="outline" className={cn("capitalize", statusTone[meeting.status])}>
+                        {meeting.status}
+                      </Badge>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleRetryTranscription(meeting)}
+                        disabled={isTranscribing || (!transcriptionRun?.audioPath && !localAudioPath.trim())}
+                      >
+                        <RotateCcwIcon className={cn("size-3", isTranscribing && "animate-spin")} />
+                        {transcriptionStatus === "failed" ? "Retry" : "Transcribe"}
+                      </Button>
+                    </div>
                   </div>
-                  <Badge variant="outline" className={cn("capitalize", statusTone[meeting.status])}>
-                    {meeting.status}
-                  </Badge>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </CardContent>

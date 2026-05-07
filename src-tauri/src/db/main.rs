@@ -24,6 +24,13 @@ pub fn migrations() -> Vec<Migration> {
             sql: include_str!("migrations/meeting-data.sql"),
             kind: MigrationKind::Up,
         },
+        // Migration 4: Track local transcription runs and retry state
+        Migration {
+            version: 4,
+            description: "create_transcription_runs_table",
+            sql: include_str!("migrations/transcription-runs.sql"),
+            kind: MigrationKind::Up,
+        },
     ]
 }
 
@@ -55,5 +62,23 @@ mod tests {
                 "migration should create {table} table"
             );
         }
+    }
+
+    #[test]
+    fn includes_transcription_runs_migration() {
+        let all_migrations = migrations();
+        let transcription_migration = all_migrations
+            .iter()
+            .find(|migration| migration.version == 4)
+            .expect("transcription runs migration should be registered");
+
+        assert_eq!(
+            transcription_migration.description,
+            "create_transcription_runs_table"
+        );
+        assert!(transcription_migration
+            .sql
+            .contains("CREATE TABLE IF NOT EXISTS transcription_runs"));
+        assert!(transcription_migration.sql.contains("attempts"));
     }
 }

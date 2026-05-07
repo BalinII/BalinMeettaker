@@ -8,6 +8,13 @@ export type MeetingStatus =
 
 export type ActionStatus = "open" | "in_progress" | "completed" | "cancelled";
 
+export type TranscriptionStatus =
+  | "idle"
+  | "queued"
+  | "running"
+  | "completed"
+  | "failed";
+
 export interface Meeting {
   id: string;
   title: string;
@@ -24,6 +31,19 @@ export interface Participant {
   name: string;
   email?: string | null;
   role?: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface TranscriptionRun {
+  meetingId: string;
+  audioPath: string;
+  provider: string;
+  status: TranscriptionStatus;
+  error?: string | null;
+  attempts: number;
+  lastStartedAt?: number | null;
+  completedAt?: number | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -77,6 +97,7 @@ export interface Decision {
 }
 
 export interface MeetingDetail extends Meeting {
+  transcriptionRun?: TranscriptionRun | null;
   participants: Participant[];
   transcriptSegments: TranscriptSegment[];
   summaries: Summary[];

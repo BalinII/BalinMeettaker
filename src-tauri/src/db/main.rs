@@ -17,5 +17,43 @@ pub fn migrations() -> Vec<Migration> {
             sql: include_str!("migrations/chat-history.sql"),
             kind: MigrationKind::Up,
         },
+        // Migration 3: Create local-only meeting data tables
+        Migration {
+            version: 3,
+            description: "create_meeting_data_tables",
+            sql: include_str!("migrations/meeting-data.sql"),
+            kind: MigrationKind::Up,
+        },
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn includes_local_meeting_data_migration() {
+        let all_migrations = migrations();
+        let meeting_migration = all_migrations
+            .iter()
+            .find(|migration| migration.version == 3)
+            .expect("meeting data migration should be registered");
+
+        assert_eq!(meeting_migration.description, "create_meeting_data_tables");
+        for table in [
+            "meetings",
+            "participants",
+            "transcript_segments",
+            "summaries",
+            "actions",
+            "decisions",
+        ] {
+            assert!(
+                meeting_migration
+                    .sql
+                    .contains(&format!("CREATE TABLE IF NOT EXISTS {table}")),
+                "migration should create {table} table"
+            );
+        }
+    }
 }

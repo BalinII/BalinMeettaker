@@ -10,3 +10,5 @@ export * from "./analytics";
 export * from "./response-settings.constants";
 
 export * from "./transcription";
+
+export * from "./summarization";

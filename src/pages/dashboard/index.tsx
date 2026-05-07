@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   AlertCircleIcon,
+  BrainCircuitIcon,
   CalendarClockIcon,
   CheckCircle2Icon,
   ClockIcon,
@@ -29,12 +30,18 @@ import { cn } from "@/lib/utils";
 import {
   createMeeting,
   deleteTranscriptSegments,
+  getMeetingDetail,
   listMeetings,
   listTranscriptionRuns,
   saveTranscriptSegments,
   updateMeetingStatus,
   upsertTranscriptionRun,
 } from "@/lib/database";
+import {
+  DEFAULT_OLLAMA_SUMMARY_MODEL,
+  checkOllamaHealth,
+  summarizeMeetingWithOllama,
+} from "@/lib/summarization";
 import { localTranscriptionProvider } from "@/lib/transcription";
 import type { Meeting, TranscriptionRun } from "@/types";
 
@@ -105,6 +112,10 @@ const Dashboard = () => {
   const [recentMeetings, setRecentMeetings] = useState<Meeting[]>([]);
   const [transcriptionRuns, setTranscriptionRuns] = useState<TranscriptionRun[]>([]);
   const [localAudioPath, setLocalAudioPath] = useState("");
+  const [ollamaModel, setOllamaModel] = useState(DEFAULT_OLLAMA_SUMMARY_MODEL);
+  const [summarizingMeetingIds, setSummarizingMeetingIds] = useState<Set<string>>(
+    () => new Set()
+  );
   const [transcribingMeetingIds, setTranscribingMeetingIds] = useState<Set<string>>(
     () => new Set()
   );
@@ -114,6 +125,7 @@ const Dashboard = () => {
   }>({ input: [], output: [] });
   const [isLoadingDevices, setIsLoadingDevices] = useState(false);
   const [error, setError] = useState("");
+  const [ollamaStatus, setOllamaStatus] = useState("");
 
   const isRecording = captureState === "recording";
   const isPaused = captureState === "paused";
@@ -341,6 +353,61 @@ const Dashboard = () => {
     }
   };
 
+  const summarizeMeeting = useCallback(
+    async (meeting: Meeting) => {
+      setError("");
+      setOllamaStatus("Checking Ollama...");
+      setSummarizingMeetingIds((current) => {
+        const next = new Set(current);
+        next.add(meeting.id);
+        return next;
+      });
+
+      try {
+        const health = await checkOllamaHealth({ model: ollamaModel });
+        if (!health.ok) {
+          throw new Error(
+            health.error ||
+              `Ollama is not available at ${health.baseUrl} with model ${health.model}.`
+          );
+        }
+
+        const detail = await getMeetingDetail(meeting.id);
+        if (!detail || detail.transcriptSegments.length === 0) {
+          throw new Error(
+            "No transcript segments are available. Transcribe the meeting before summarising."
+          );
+        }
+
+        setOllamaStatus("Summarising transcript with Ollama...");
+        const result = await summarizeMeetingWithOllama({
+          meetingId: meeting.id,
+          transcriptSegments: detail.transcriptSegments,
+          model: ollamaModel,
+        });
+
+        setOllamaStatus(
+          `Saved summary (${result.chunkCount} chunk${
+            result.chunkCount === 1 ? "" : "s"
+          }) with ${result.model}.`
+        );
+        await refreshMeetings();
+      } catch (summaryError) {
+        const message =
+          summaryError instanceof Error ? summaryError.message : String(summaryError);
+        setError(message);
+        setOllamaStatus("Summarisation failed.");
+      } finally {
+        setSummarizingMeetingIds((current) => {
+          const next = new Set(current);
+          next.delete(meeting.id);
+          return next;
+        });
+      }
+    },
+    [ollamaModel, refreshMeetings]
+  );
+
   const handleRetryTranscription = (meeting: Meeting) => {
     const run = transcriptionRunByMeetingId.get(meeting.id);
     transcribeMeetingAudio(meeting, run?.audioPath || localAudioPath);
@@ -373,7 +440,7 @@ const Dashboard = () => {
   return (
     <PageLayout
       title="Meeting Capture"
-      description="Start a meeting, monitor capture health, and keep recent recordings organized. Summaries will come later."
+      description="Start a meeting, monitor capture health, transcribe locally, and generate local Ollama summaries."
     >
       <section className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
         <Card className="overflow-hidden border-primary/10 bg-gradient-to-br from-card via-card to-primary/5">
@@ -382,7 +449,7 @@ const Dashboard = () => {
               <div>
                 <CardTitle className="text-2xl">Capture dashboard</CardTitle>
                 <CardDescription>
-                  Control the meeting recording flow without triggering AI summarisation.
+                  Control recording, transcription, and local Ollama summarisation.
                 </CardDescription>
               </div>
               <Badge
@@ -415,20 +482,37 @@ const Dashboard = () => {
               />
             </div>
 
-            <div className="space-y-2">
-              <label className="text-sm font-medium" htmlFor="local-audio-path">
-                Local audio file path for transcription
-              </label>
-              <Input
-                id="local-audio-path"
-                value={localAudioPath}
-                onChange={(event) => setLocalAudioPath(event.target.value)}
-                placeholder="/path/to/meeting.wav"
-                className="h-11"
-              />
-              <p className="text-xs text-muted-foreground">
-                MinuteSmith sends this path only to the local transcription provider. If no backend command is configured, a local placeholder segment is saved.
-              </p>
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <label className="text-sm font-medium" htmlFor="local-audio-path">
+                  Local audio file path for transcription
+                </label>
+                <Input
+                  id="local-audio-path"
+                  value={localAudioPath}
+                  onChange={(event) => setLocalAudioPath(event.target.value)}
+                  placeholder="/path/to/meeting.wav"
+                  className="h-11"
+                />
+                <p className="text-xs text-muted-foreground">
+                  MinuteSmith sends this path only to the local transcription provider. If no backend command is configured, a local placeholder segment is saved.
+                </p>
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium" htmlFor="ollama-model">
+                  Ollama summary model
+                </label>
+                <Input
+                  id="ollama-model"
+                  value={ollamaModel}
+                  onChange={(event) => setOllamaModel(event.target.value)}
+                  placeholder={DEFAULT_OLLAMA_SUMMARY_MODEL}
+                  className="h-11"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Uses local Ollama at 127.0.0.1:11434, validates JSON schema, then saves summary, actions, and decisions locally.
+                </p>
+              </div>
             </div>
 
             <div className="grid gap-3 md:grid-cols-3">
@@ -459,6 +543,16 @@ const Dashboard = () => {
                 </p>
               </div>
             </div>
+
+            {ollamaStatus ? (
+              <div className="flex items-start gap-3 rounded-2xl border border-primary/20 bg-primary/10 p-4 text-sm text-primary">
+                <BrainCircuitIcon className="mt-0.5 size-4 shrink-0" />
+                <div>
+                  <p className="font-medium">Ollama summarisation</p>
+                  <p className="text-primary/80">{ollamaStatus}</p>
+                </div>
+              </div>
+            ) : null}
 
             {error ? (
               <div className="flex items-start gap-3 rounded-2xl border border-destructive/20 bg-destructive/10 p-4 text-sm text-destructive">
@@ -577,6 +671,7 @@ const Dashboard = () => {
               {recentMeetings.map((meeting) => {
                 const transcriptionRun = transcriptionRunByMeetingId.get(meeting.id);
                 const isTranscribing = transcribingMeetingIds.has(meeting.id);
+                const isSummarizing = summarizingMeetingIds.has(meeting.id);
                 const transcriptionStatus = transcriptionRun?.status ?? "idle";
 
                 return (
@@ -597,6 +692,7 @@ const Dashboard = () => {
                         Transcription: <span className="capitalize">{transcriptionStatus}</span>
                         {transcriptionRun?.attempts ? ` · ${transcriptionRun.attempts} attempt${transcriptionRun.attempts === 1 ? "" : "s"}` : ""}
                         {transcriptionRun?.audioPath ? ` · ${transcriptionRun.audioPath}` : ""}
+                        {isSummarizing ? " · summarising with Ollama" : ""}
                       </p>
                       {transcriptionRun?.error ? (
                         <p className="mt-1 text-xs text-destructive">{transcriptionRun.error}</p>
@@ -614,6 +710,15 @@ const Dashboard = () => {
                       >
                         <RotateCcwIcon className={cn("size-3", isTranscribing && "animate-spin")} />
                         {transcriptionStatus === "failed" ? "Retry" : "Transcribe"}
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => summarizeMeeting(meeting)}
+                        disabled={isSummarizing || transcriptionStatus !== "completed"}
+                      >
+                        <BrainCircuitIcon className={cn("size-3", isSummarizing && "animate-pulse")} />
+                        Summarise
                       </Button>
                     </div>
                   </div>

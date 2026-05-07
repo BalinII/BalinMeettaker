@@ -8,3 +8,5 @@ Our preference is that you make use of GitHub's private vulnerability reporting 
 
 To do this, please visit the [Security tab](https://github.com/iamsrikanthnani/minutesmith/security) of the repository and click the **"Report a vulnerability"** button.
 
+MinuteSmith is being developed as a local-first meeting notes app. Please include privacy-impacting issues in security reports, especially behavior that could unexpectedly transmit recordings, transcripts, summaries, prompts, local meeting data, settings, or telemetry to remote services.
+

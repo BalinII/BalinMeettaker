@@ -23,7 +23,7 @@ export const CursorSelection = ({ className }: CursorSelectionProps) => {
     <div id="cursor" className={`space-y-2 ${className}`}>
       <Header
         title="Cursor"
-        description="Control minutesmith cursor visibility"
+        description="Choose how the cursor appears over the MinuteSmith window"
         isMainTitle
         rightSlot={
           <Select
@@ -35,7 +35,7 @@ export const CursorSelection = ({ className }: CursorSelectionProps) => {
             </SelectTrigger>
             <SelectContent position="popper" align="end">
               <SelectItem value="invisible" disabled={platform === "linux"}>
-                Invisible (<MousePointer2 className="size-3 px-0" />){" "}
+                No custom cursor (<MousePointer2 className="size-3 px-0" />){" "}
                 {platform === "linux" && (
                   <span className="text-xs text-muted-foreground">
                     Not supported on Linux

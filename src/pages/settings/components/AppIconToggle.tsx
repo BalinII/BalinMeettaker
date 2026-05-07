@@ -15,8 +15,8 @@ export const AppIconToggle = ({ className }: AppIconToggleProps) => {
   return (
     <div id="app-icon" className={`space-y-2 ${className}`}>
       <Header
-        title="App Icon Stealth Mode"
-        description="Control dock/taskbar icon visibility when window is hidden for maximum discretion"
+        title="App Icon Visibility"
+        description="Control whether MinuteSmith appears in the dock or taskbar while it is running"
         isMainTitle
       />
       <div className="flex items-center justify-between">
@@ -29,7 +29,7 @@ export const AppIconToggle = ({ className }: AppIconToggleProps) => {
             </Label>
             <p className="text-xs text-muted-foreground mt-1">
               {`Toggle to make App Icon ${
-                !customizable.appIcon.isVisible ? "Visible" : "Hidden"
+                !customizable.appIcon.isVisible ? "visible" : "not visible"
               }`}
             </p>
           </div>

@@ -43,7 +43,10 @@ import {
   checkOllamaHealth,
   summarizeMeetingWithOllama,
 } from "@/lib/summarization";
-import { localTranscriptionProvider } from "@/lib/transcription";
+import {
+  DEFAULT_FASTER_WHISPER_MODEL,
+  FasterWhisperTranscriptionProvider,
+} from "@/lib/transcription";
 import type { Meeting, TranscriptionRun } from "@/types";
 
 type CaptureState = "idle" | "recording" | "stopping";
@@ -112,6 +115,8 @@ const Dashboard = () => {
     TranscriptionRun[]
   >([]);
   const [ollamaModel, setOllamaModel] = useState(DEFAULT_OLLAMA_SUMMARY_MODEL);
+  const [whisperModel, setWhisperModel] = useState(DEFAULT_FASTER_WHISPER_MODEL);
+  const [transcriptionLanguage, setTranscriptionLanguage] = useState("en");
   const [summarizingMeetingIds, setSummarizingMeetingIds] = useState<
     Set<string>
   >(() => new Set());
@@ -183,11 +188,16 @@ const Dashboard = () => {
         return next;
       });
 
+      const transcriptionProvider = new FasterWhisperTranscriptionProvider(
+        whisperModel.trim() || DEFAULT_FASTER_WHISPER_MODEL,
+        transcriptionLanguage.trim() || undefined,
+      );
+
       try {
         await upsertTranscriptionRun({
           meetingId: meeting.id,
           audioPath: trimmedAudioPath,
-          provider: localTranscriptionProvider.id,
+          provider: transcriptionProvider.id,
           status: "running",
           incrementAttempts: true,
           lastStartedAt: Date.now(),
@@ -195,7 +205,7 @@ const Dashboard = () => {
         await updateMeetingStatus(meeting.id, "processing");
         await refreshMeetings();
 
-        const segments = await localTranscriptionProvider.transcribeAudioFile(
+        const segments = await transcriptionProvider.transcribeAudioFile(
           meeting.id,
           trimmedAudioPath,
         );
@@ -204,7 +214,7 @@ const Dashboard = () => {
         await upsertTranscriptionRun({
           meetingId: meeting.id,
           audioPath: trimmedAudioPath,
-          provider: localTranscriptionProvider.id,
+          provider: transcriptionProvider.id,
           status: "completed",
           completedAt: Date.now(),
         });
@@ -221,7 +231,7 @@ const Dashboard = () => {
         await upsertTranscriptionRun({
           meetingId: meeting.id,
           audioPath: trimmedAudioPath,
-          provider: localTranscriptionProvider.id,
+          provider: transcriptionProvider.id,
           status: "failed",
           error: message,
         }).catch(() => undefined);
@@ -240,7 +250,7 @@ const Dashboard = () => {
         await refreshMeetings();
       }
     },
-    [refreshMeetings],
+    [refreshMeetings, transcriptionLanguage, whisperModel],
   );
 
   const loadAudioDevices = useCallback(async () => {
@@ -360,7 +370,7 @@ const Dashboard = () => {
       await upsertTranscriptionRun({
         meetingId: activeMeeting.id,
         audioPath: capturedAudio.audioPath,
-        provider: localTranscriptionProvider.id,
+        provider: "faster-whisper",
         status: "queued",
       });
       setCaptureState("idle");
@@ -387,7 +397,7 @@ const Dashboard = () => {
         await upsertTranscriptionRun({
           meetingId: activeMeeting.id,
           audioPath,
-          provider: localTranscriptionProvider.id,
+          provider: "faster-whisper",
           status: "failed",
           error: message,
         }).catch(() => undefined);
@@ -555,7 +565,7 @@ const Dashboard = () => {
               />
             </div>
 
-            <div className="grid gap-4 md:grid-cols-2">
+            <div className="grid gap-4 md:grid-cols-3">
               <div className="space-y-2 rounded-2xl border bg-background/70 p-4">
                 <p className="text-sm font-medium">Meeting audio file</p>
                 <p className="text-xs text-muted-foreground">
@@ -566,6 +576,34 @@ const Dashboard = () => {
                 </p>
                 <p className="truncate text-xs font-medium text-foreground">
                   {activeAudioPath || "No active audio file yet"}
+                </p>
+              </div>
+              <div className="space-y-2 rounded-2xl border bg-background/70 p-4">
+                <label className="text-sm font-medium" htmlFor="whisper-model">
+                  faster-whisper model
+                </label>
+                <Input
+                  id="whisper-model"
+                  value={whisperModel}
+                  onChange={(event) => setWhisperModel(event.target.value)}
+                  placeholder={DEFAULT_FASTER_WHISPER_MODEL}
+                  className="h-11"
+                />
+                <label className="text-sm font-medium" htmlFor="whisper-language">
+                  Language (optional)
+                </label>
+                <Input
+                  id="whisper-language"
+                  value={transcriptionLanguage}
+                  onChange={(event) =>
+                    setTranscriptionLanguage(event.target.value)
+                  }
+                  placeholder="en, es, fr, or blank for auto-detect"
+                  className="h-11"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Runs locally through Python/faster-whisper and saves timestamped
+                  segments to SQLite. Blank language enables model auto-detect.
                 </p>
               </div>
               <div className="space-y-2">

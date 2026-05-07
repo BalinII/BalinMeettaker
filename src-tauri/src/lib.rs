@@ -101,7 +101,9 @@ pub fn run() {
             speaker::get_output_devices,
             meeting_audio::start_meeting_audio_capture,
             meeting_audio::stop_meeting_audio_capture,
+            transcription::transcribe_audio_file_faster_whisper,
             transcription::transcribe_audio_file_local,
+            transcription::transcribe_audio_file_local_command,
         ])
         .setup(|app| {
             // Setup main window positioning

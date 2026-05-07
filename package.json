@@ -2,7 +2,7 @@
   "name": "minutesmith",
   "private": false,
   "version": "0.1.9",
-  "description": "Local-first meeting notes app prototype built with Tauri, React, SQLite, global shortcuts, and configurable local/custom AI providers.",
+  "description": "Local-first meeting notes app prototype built with Tauri, React, SQLite, local transcription scaffolding, and Ollama summarisation scaffolding.",
   "author": {
     "name": "Srikanth Nani",
     "email": "srikanthnani1202@gmail.com",
@@ -18,16 +18,17 @@
     "url": "https://github.com/iamsrikanthnani/minutesmith/issues"
   },
   "keywords": [
-    "ai-assistant",
+    "meeting-notes",
+    "local-first",
     "tauri",
     "desktop-app",
     "privacy-first",
     "open-source",
-    "meeting-assistant",
+    "meeting-capture",
     "speech-to-text",
-    "llm",
-    "chatgpt",
-    "claude",
+    "local-llm",
+    "ollama",
+    "llama",
     "typescript",
     "react",
     "rust"

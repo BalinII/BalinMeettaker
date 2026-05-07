@@ -5,7 +5,6 @@ import {
   STORAGE_KEYS,
 } from "@/config";
 import { getPlatform, safeLocalStorage } from "@/lib";
-import { getShortcutsConfig } from "@/lib/storage";
 import {
   getCustomizableState,
   setCustomizableState,
@@ -158,8 +157,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
           hasLicense: hasActiveLicense,
         });
 
-        const config = getShortcutsConfig();
-        await invoke("update_shortcuts", { config });
+        // Do not register legacy overlay/chat shortcuts on normal startup.
       } catch (error) {
         console.error("Failed to synchronize license state:", error);
       }
@@ -237,7 +235,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     const customizableState = getCustomizableState();
     setCustomizable(customizableState);
 
-    updateCursor(customizableState.cursor.type || "invisible");
+    updateCursor(customizableState.cursor.type || "default");
 
     const stored = safeLocalStorage.getItem(STORAGE_KEYS.CUSTOMIZABLE);
     if (!stored) {
@@ -250,7 +248,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         if (!parsed.autostart) {
           // save the merged state with new autostart property
           setCustomizableState(customizableState);
-          updateCursor(customizableState.cursor.type || "invisible");
+          updateCursor(customizableState.cursor.type || "default");
         }
       } catch (error) {
         console.debug("Failed to check customizable state schema:", error);

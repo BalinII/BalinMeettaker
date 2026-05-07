@@ -9,13 +9,13 @@
     "url": "https://www.srikanthnani.com"
   },
   "license": "GPL-3.0",
-  "homepage": "https://github.com/iamsrikanthnani/minutesmith#readme",
+  "homepage": "https://github.com/BalinII/BalinMeettaker#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/iamsrikanthnani/minutesmith.git"
+    "url": "git+https://github.com/BalinII/BalinMeettaker.git"
   },
   "bugs": {
-    "url": "https://github.com/iamsrikanthnani/minutesmith/issues"
+    "url": "https://github.com/BalinII/BalinMeettaker/issues"
   },
   "keywords": [
     "meeting-notes",

@@ -48,6 +48,10 @@ Near-term work is focused on making the meeting workflow reliable end to end:
 - Speaker diarisation.
 - Export to Markdown, DOCX, and TXT.
 
+## Local transcription
+
+MinuteSmith records durable meeting audio to disk and transcribes it locally with a Python `faster-whisper` runner by default. See [Local faster-whisper transcription setup](docs/local-transcription.md) for Python version, virtual environment, install, model cache, and fallback local-command provider instructions.
+
 ## Development
 
 ```bash

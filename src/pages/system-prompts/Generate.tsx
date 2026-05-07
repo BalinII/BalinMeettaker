@@ -125,7 +125,7 @@ export const GenerateSystemPrompt = ({
                 below to get a license.
               </p>
               <GetLicense
-                buttonText="Get License"
+                buttonText="Local mode"
                 buttonClassName="w-full"
                 setState={setIsOpen}
               />

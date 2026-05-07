@@ -11,6 +11,7 @@ import {
   Screenshot,
   Chats,
   Responses,
+  MeetingDetail,
 } from "@/pages";
 import { DashboardLayout } from "@/layouts";
 
@@ -29,6 +30,7 @@ export default function AppRoutes() {
           <Route path="/settings" element={<Settings />} />
           <Route path="/audio" element={<Audio />} />
           <Route path="/responses" element={<Responses />} />
+          <Route path="/meetings/:meetingId" element={<MeetingDetail />} />
           <Route path="/dev-space" element={<DevSpace />} />
         </Route>
       </Routes>

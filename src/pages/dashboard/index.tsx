@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import {
   AlertCircleIcon,
   BrainCircuitIcon,
@@ -882,7 +883,12 @@ const Dashboard = () => {
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
                         <CalendarClockIcon className="size-4 text-muted-foreground" />
-                        <p className="truncate font-medium">{meeting.title}</p>
+                        <Link
+                          to={`/meetings/${meeting.id}`}
+                          className="truncate font-medium hover:text-primary hover:underline"
+                        >
+                          {meeting.title}
+                        </Link>
                       </div>
                       <p className="mt-1 text-xs text-muted-foreground">
                         {formatMeetingTime(meeting.startedAt)}
@@ -910,6 +916,9 @@ const Dashboard = () => {
                       ) : null}
                     </div>
                     <div className="flex shrink-0 items-center gap-2">
+                      <Button asChild variant="outline" size="sm">
+                        <Link to={`/meetings/${meeting.id}`}>Review</Link>
+                      </Button>
                       <Badge
                         variant="outline"
                         className={cn("capitalize", statusTone[meeting.status])}

@@ -25,6 +25,7 @@ interface DbMeeting {
   status: MeetingStatus;
   started_at: number | null;
   ended_at: number | null;
+  audio_path: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -156,6 +157,7 @@ function mapMeeting(row: DbMeeting): Meeting {
     status: row.status,
     startedAt: row.started_at,
     endedAt: row.ended_at,
+    audioPath: row.audio_path,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -255,6 +257,7 @@ export async function createMeeting(input: CreateMeetingInput): Promise<Meeting>
     status: input.status ?? "scheduled",
     startedAt: input.startedAt ?? null,
     endedAt: input.endedAt ?? null,
+    audioPath: input.audioPath?.trim() || null,
     createdAt: now,
     updatedAt: now,
   };
@@ -263,13 +266,14 @@ export async function createMeeting(input: CreateMeetingInput): Promise<Meeting>
   try {
     await db.execute("BEGIN");
     await db.execute(
-      "INSERT INTO meetings (id, title, status, started_at, ended_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO meetings (id, title, status, started_at, ended_at, audio_path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
       [
         meeting.id,
         meeting.title,
         meeting.status,
         meeting.startedAt,
         meeting.endedAt,
+        meeting.audioPath,
         meeting.createdAt,
         meeting.updatedAt,
       ]
@@ -312,6 +316,23 @@ export async function updateMeetingStatus(
   await db.execute(
     "UPDATE meetings SET status = ?, ended_at = COALESCE(?, ended_at), updated_at = ? WHERE id = ?",
     [status, endedAt ?? null, now, meetingId]
+  );
+
+  return getMeetingById(meetingId);
+}
+
+export async function updateMeetingAudioPath(
+  meetingId: string,
+  audioPath: string
+): Promise<Meeting | null> {
+  assertNonEmpty(meetingId, "Meeting id");
+  assertNonEmpty(audioPath, "Audio path");
+
+  const db = await getDatabase();
+  const now = Date.now();
+  await db.execute(
+    "UPDATE meetings SET audio_path = ?, updated_at = ? WHERE id = ?",
+    [audioPath.trim(), now, meetingId]
   );
 
   return getMeetingById(meetingId);

@@ -21,6 +21,7 @@ export interface Meeting {
   status: MeetingStatus;
   startedAt?: number | null;
   endedAt?: number | null;
+  audioPath?: string | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -111,6 +112,7 @@ export interface CreateMeetingInput {
   status?: MeetingStatus;
   startedAt?: number | null;
   endedAt?: number | null;
+  audioPath?: string | null;
   participants?: Array<
     Pick<Participant, "name"> &
       Partial<Pick<Participant, "id" | "email" | "role">>
